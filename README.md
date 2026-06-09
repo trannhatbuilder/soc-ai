@@ -84,3 +84,39 @@ python -m demo.run_abuseipdb_demo
 ```
 Input file: ```demo/sample_logs.jsonl```<br>
 Output file: ```demo/output_abuseipdb_enriched.jsonl```
+
+## 6. Output Schema
+Each enrichment object contains:
+
+| Field              | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `indicator_value`  | The IOC value, currently an IP address.                              |
+| `indicator_type`   | IOC type, currently `ip`.                                            |
+| `matched_source`   | Threat intelligence source, currently `AbuseIPDB`.                   |
+| `confidence_score` | AbuseIPDB abuse confidence score.                                    |
+| `severity`         | Internal severity mapping.                                           |
+| `category`         | Internal category mapping.                                           |
+| `tags`             | Additional context tags.                                             |
+| `reputation`       | `benign`, `suspicious`, `malicious`, `not_applicable`, or `unknown`. |
+| `reason`           | Human-readable classification reason.                                |
+| `first_seen`       | First seen timestamp, if available.                                  |
+| `last_seen`        | Last reported timestamp, if available.                               |
+| `expiry_status`    | `active` or `not_applicable`.                                        |
+| `raw`              | Raw or partial provider response for debugging.                      |
+
+## 7. Severity Mapping
+```
+abuseConfidenceScore >= 90  -> critical
+abuseConfidenceScore >= 70  -> high
+abuseConfidenceScore >= 30  -> medium
+abuseConfidenceScore > 0    -> low
+otherwise                   -> none
+```
+
+## 8. Reputation Mapping
+
+```
+abuseConfidenceScore >= 70              -> malicious
+abuseConfidenceScore > 0 or reports > 0 -> suspicious
+otherwise                               -> benign
+```
