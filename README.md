@@ -2,13 +2,15 @@
 
 This project implements the Threat Intelligence Enrichment layer for SOC AI.
 
-The current completed module is:
+The current completed modules are:
 
 - AbuseIPDB IP Reputation Lookup
+- AbuseIPDB Enrichment Normalizer (for deduplication/aggregation stage)
 
-Upcoming module:
+Upcoming modules:
 
 - VirusTotal Lookup
+- VirusTotal Enrichment Normalizer
 
 ---
 
@@ -21,26 +23,62 @@ Current enrichment flow:
 ```text
 Raw Logs
   -> Normalize Logs
-  -> AbuseIPDB Lookup
-  -> Data Enrichment
+  -> Enrichment (AbuseIPDB Lookup)
+  -> Enrichment Normalization (compact format for deduplication)
   -> Deduplicate Logs
   -> Log Aggregation
   -> AI Log Analysis
 ```
 
-## 2. Current Feature: AbuseIPDB Lookup
+## 2. Current Features
+
+### 2.1 AbuseIPDB Lookup
 The AbuseIPDB lookup module supports:
 
 - Public IP reputation lookup
 - Private/internal IP detection
 - Malformed IP detection
 - Reserved/link-local/loopback IP handling
-- Local JSON cache
+- Local JSON cache with TTL
 - Structured enrichment output
 - JSONL input/output demo
 - Local demo execution
 
 The AbuseIPDB API check endpoint accepts one IPv4 or IPv6 address and supports parameters such as ipAddress, maxAgeInDays, and verbose. The response data is returned under the data object and can include fields such as abuseConfidenceScore, countryCode, usageType, isp, domain, totalReports, and lastReportedAt.
+
+### 2.2 AbuseIPDB Enrichment Normalizer (Deduplicate Logs Stage)
+
+The enrichment normalizer converts raw AbuseIPDB enrichment results into a compact, analyst-friendly format optimized for downstream deduplication and aggregation stages.
+
+**Features:**
+- Extracts top attack categories from reports
+- Samples unique report comments (deduplicated)
+- Builds concise summary with key metadata
+- Reduces storage footprint while preserving context
+- Configurable limits for comments and categories
+
+**Compact Output Structure:**
+```json
+{
+  "summary": {
+    "total_reports": 6833,
+    "distinct_reporters": 1265,
+    "country_code": "US",
+    "usage_type": "Data Center/Web Hosting/Transit",
+    "isp": "Asia Pacific Network Information Center, Pty. Ltd.",
+    "domain": "apnic.net",
+    "is_tor": false,
+    "is_whitelisted": false,
+    "top_categories": ["Brute Force", "SSH", "Web App Attack"],
+    "sample_report_comments": ["comment 1", "comment 2", "comment 3"]
+  },
+  "raw_ref": {
+    "provider": "AbuseIPDB",
+    "raw_stored": false,
+    "normalized_version": "1.0"
+  }
+}
+```
 
 ## 3. Project Structure
 
@@ -48,46 +86,71 @@ The AbuseIPDB API check endpoint accepts one IPv4 or IPv6 address and supports p
 soc_ai_enrichment/
 ├── soc_ai/
 │   └── enrichment/
-│       ├── cache.py
-│       ├── ip_utils.py
-│       ├── pipeline.py
-│       ├── schemas.py
-│       └── providers/
-│       │    └── abuseipdb.py
+│       ├── cache.py              # JSON-based caching with TTL
+│       ├── ip_utils.py           # IP classification utilities
+│       ├── pipeline.py           # Main enrichment pipeline
+│       ├── schemas.py            # Data models (EnrichmentResult, EnrichedEvent)
+│       ├── providers/
+│       │    └── abuseipdb.py     # AbuseIPDB API provider
 │       └── deduplicate_logs/
-│            └── abuseipdb.py
+│            ├── abuseipdb.py     # AbuseIPDB enrichment normalizer
+│            └── virustotal.py    # VirusTotal normalizer (placeholder)
 ├── demo/
 │   ├── run_abuseipdb_demo.py
-│   └── sample_logs.jsonl
+│   ├── sample_logs.jsonl
+│   └── output_abuseipdb_enriched.jsonl  # Demo output (pre-normalization)
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
+**Note:** The file `demo/output_abuseipdb_enriched.jsonl` contains output from the previous version (before the normalizer was added). It is kept for reference and comparison with future normalized outputs.
+
 ## 4. Setup
-```cd soc_ai_enrichment```
-``` 
+
+```bash
+cd soc_ai_enrichment
 python -m venv .venv
 ```
+
 Linux/macOS:
-```
+```bash
 source .venv/bin/activate
 ```
+
 Windows PowerShell:
-```
+```powershell
 .\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-## 5. Run Local Demo
-From the project root:
+Configure environment variables:
+```bash
+cp .env.example .env
+# Edit .env and add your AbuseIPDB API key
 ```
+
+## 5. Run Local Demo
+
+From the project root:
+
+```bash
 python -m demo.run_abuseipdb_demo
 ```
-Input file: ```demo/sample_logs.jsonl```<br>
-Output file: ```demo/output_abuseipdb_enriched.jsonl```
+
+**Input file:** `demo/sample_logs.jsonl`  
+**Output file:** `demo/output_abuseipdb_enriched.jsonl`
+
+The demo reads sample log events, enriches each IP address with AbuseIPDB data, applies the enrichment normalizer to produce compact output, and writes the enriched events to JSONL format.
 
 ## 6. Output Schema
+
+### 6.1 EnrichmentResult Fields (Raw Provider Output)
+
 Each enrichment object contains:
 
 | Field              | Description                                                          |
@@ -106,8 +169,29 @@ Each enrichment object contains:
 | `expiry_status`    | `active` or `not_applicable`.                                        |
 | `raw`              | Raw or partial provider response for debugging.                      |
 
+### 6.2 Normalized Output (After Deduplicate Logs Stage)
+
+After passing through the `AbuseIPDBEnrichmentNormalizer`, the `raw` field is transformed into a compact structure:
+
+| Field                  | Description                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| `summary.total_reports` | Total number of reports from AbuseIPDB.                     |
+| `summary.distinct_reporters` | Number of distinct users who reported the IP.          |
+| `summary.country_code` | Country code of the IP.                                      |
+| `summary.usage_type`   | Usage type (e.g., Data Center, ISP).                         |
+| `summary.isp`          | Internet Service Provider name.                              |
+| `summary.domain`       | Domain associated with the IP.                               |
+| `summary.is_tor`       | Whether the IP is a known Tor exit node.                     |
+| `summary.is_whitelisted` | Whether the IP is whitelisted on AbuseIPDB.               |
+| `summary.top_categories` | Top attack categories (most frequent first).               |
+| `summary.sample_report_comments` | Up to 3 unique report comments (deduplicated).     |
+| `raw_ref.provider`     | Provider name (e.g., `AbuseIPDB`).                           |
+| `raw_ref.raw_stored`   | Always `false` (raw data not stored to save space).          |
+| `raw_ref.normalized_version` | Version of the normalization schema.                    |
+
 ## 7. Severity Mapping
-```
+
+```text
 abuseConfidenceScore >= 90  -> critical
 abuseConfidenceScore >= 70  -> high
 abuseConfidenceScore >= 30  -> medium
@@ -117,14 +201,15 @@ otherwise                   -> none
 
 ## 8. Reputation Mapping
 
-```
+```text
 abuseConfidenceScore >= 70              -> malicious
 abuseConfidenceScore > 0 or reports > 0 -> suspicious
 otherwise                               -> benign
 ```
 
 ## 9. How to get API Key?
+
 Create an account:
-```https://www.abuseipdb.com/register```
+https://www.abuseipdb.com/register
 
 ---
