@@ -98,7 +98,7 @@ soc_ai_enrichment/
 ├── demo/
 │   ├── run_abuseipdb_demo.py
 │   ├── sample_logs.jsonl
-│   └── output_abuseipdb_enriched.jsonl  # Demo output (pre-normalization)
+│   └── output_abuseipdb_enriched.jsonl  # Demo output (pre-deduplication)
 ├── requirements.txt
 ├── .env.example
 └── README.md
