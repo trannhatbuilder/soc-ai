@@ -1,5 +1,5 @@
-{"event_id":"evt-001","timestamp":"2026-06-09T08:00:00Z","log_source":"aws_waf","source_ip":"8.8.8.8","destination_ip":"10.0.0.15","http_method":"GET","uri":"/login","action":"ALLOW","status_code":200}
-{"event_id":"evt-002","timestamp":"2026-06-09T08:01:00Z","log_source":"firewall","source_ip":"1.1.1.1","destination_ip":"192.168.1.20","destination_port":443,"action":"ALLOW"}
+{"event_id":"evt-001","timestamp":"2026-06-09T08:00:00Z","log_source":"aws_waf","source_ip":"43.159.177.40","destination_ip":"10.0.0.15","http_method":"GET","uri":"/login","action":"ALLOW","status_code":200}
+{"event_id":"evt-002","timestamp":"2026-06-09T08:01:00Z","log_source":"firewall","source_ip":"136.110.35.182","destination_ip":"192.168.1.20","destination_port":443,"action":"ALLOW"}
 {"event_id":"evt-003","timestamp":"2026-06-09T08:02:00Z","log_source":"windows_event","source_ip":"192.168.1.100","destination_ip":"10.0.0.5","username":"demo_user","event_type":"login_success"}
 {"event_id":"evt-004","timestamp":"2026-06-09T08:03:00Z","log_source":"endpoint","source_ip":"not-an-ip","destination_ip":"8.8.4.4","process_name":"demo.exe","action":"network_connection"}
 {"event_id":"evt-005","timestamp":"2026-06-09T08:04:00Z","log_source":"vpc_flow","src_ip":"208.67.222.222","dst_ip":"10.10.10.10","protocol":"TCP","dst_port":53,"action":"ACCEPT"}

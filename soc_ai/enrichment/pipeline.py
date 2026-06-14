@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Optional
 
 from soc_ai.enrichment.providers.abuseipdb import AbuseIPDBProvider
 from soc_ai.enrichment.schemas import EnrichedEvent, EnrichmentResult
+from soc_ai.enrichment.deduplicate_logs.abuseipdb import AbuseIPDBEnrichmentNormalizer
 
 
 DEFAULT_IP_FIELDS = [
@@ -22,9 +23,11 @@ class AbuseIPDBLogEnricher:
         self,
         provider: Optional[AbuseIPDBProvider] = None,
         ip_fields: Optional[List[str]] = None,
+        normalizer: Optional[AbuseIPDBEnrichmentNormalizer] = None,
     ):
         self.provider = provider or AbuseIPDBProvider()
         self.ip_fields = ip_fields or DEFAULT_IP_FIELDS
+        self.normalizer = normalizer or AbuseIPDBEnrichmentNormalizer()
 
     def enrich_event(self, event: Dict) -> EnrichedEvent:
         event_id = str(
@@ -51,6 +54,7 @@ class AbuseIPDBLogEnricher:
             seen_ips.add(ip_value)
 
             result = self.provider.lookup_ip(ip_value)
+            result = self.normalizer.compact(result)
 
             raw_data = result.raw if isinstance(result.raw, dict) else {}
             raw_data = dict(raw_data)

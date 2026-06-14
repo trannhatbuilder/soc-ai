@@ -53,7 +53,9 @@ soc_ai_enrichment/
 │       ├── pipeline.py
 │       ├── schemas.py
 │       └── providers/
-│           └── abuseipdb.py
+│       │    └── abuseipdb.py
+│       └── deduplicate_logs/
+│            └── abuseipdb.py
 ├── demo/
 │   ├── run_abuseipdb_demo.py
 │   └── sample_logs.jsonl
@@ -120,3 +122,9 @@ abuseConfidenceScore >= 70              -> malicious
 abuseConfidenceScore > 0 or reports > 0 -> suspicious
 otherwise                               -> benign
 ```
+
+## 9. How to get API Key?
+Create an account:
+```https://www.abuseipdb.com/register```
+
+---
