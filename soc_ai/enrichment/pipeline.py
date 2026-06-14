@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List, Optional
 
 from soc_ai.enrichment.providers.abuseipdb import AbuseIPDBProvider
 from soc_ai.enrichment.schemas import EnrichedEvent, EnrichmentResult
-from soc_ai.enrichment.deduplicate_logs.abuseipdb import AbuseIPDBEnrichmentNormalizer
+from soc_ai.enrichment.normalizers.abuseipdb_normalizer import AbuseIPDBEnrichmentNormalizer
 
 
 DEFAULT_IP_FIELDS = [
