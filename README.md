@@ -83,28 +83,31 @@ The enrichment normalizer converts raw AbuseIPDB enrichment results into a compa
 ## 3. Project Structure
 
 ```
-soc_ai_enrichment/
+soc-ai/
+├── raw_logs/03_fortigate_firewall.txt
+├── output/
+│   ├── normalized_fortigate.jsonl     ← Step 1 output
+│   └── enriched_fortigate.jsonl       ← Step 2 output
 ├── soc_ai/
-│   └── enrichment/
-│       ├── cache.py              # JSON-based caching with TTL
-│       ├── ip_utils.py           # IP classification utilities
-│       ├── pipeline.py           # Main enrichment pipeline
-│       ├── schemas.py            # Data models (EnrichmentResult, EnrichedEvent)
-│       ├── providers/
-│       │    └── abuseipdb.py     # AbuseIPDB API provider
-│       └── normalizers/
-│            ├── abuseipdb_normalizer.py     
-│            └── virustotal_normalizer.py    
-├── demo/
-│   ├── run_abuseipdb_demo.py
-│   ├── sample_logs.jsonl
-│   └── output_abuseipdb_enriched.jsonl  # Demo output (pre-deduplication)
+│   ├── enrichment/
+│   │   ├── cache.py                   
+│   │   ├── ip_utils.py                
+│   │   ├── schemas.py                 
+│   │   ├── pipeline.py                
+│   │   ├── providers/
+│   │   │   ├── abuseipdb.py           
+│   │   │   └── virustotal.py          
+│   │   └── normalizers/
+│   │       └── virustotal_normalizer.py 
+│   └── normalized/
+│       ├── schemas.py
+│       ├── normalizer.py
+│       ├── pipeline.py
+│       └── parsers/fortigate.py
+├── .env / .env.example
 ├── requirements.txt
-├── .env.example
 └── README.md
 ```
-
-**Note:** The file `demo/output_abuseipdb_enriched.jsonl` contains output from the previous version (before the normalizer was added). It is kept for reference and comparison with future normalized outputs.
 
 ## 4. Setup
 
@@ -139,13 +142,14 @@ cp .env.example .env
 From the project root:
 
 ```bash
-python -m demo.run_abuseipdb_demo
+cd soc-ai
+
+# Step 1: Normalize
+python -m soc_ai.normalized.pipeline raw_logs/03_fortigate_firewall.txt output/normalized_fortigate.jsonl
+
+# Step 2: Enrich
+python -m soc_ai.enrichment.pipeline output/normalized_fortigate.jsonl output/enriched_fortigate.jsonl
 ```
-
-**Input file:** `demo/sample_logs.jsonl`  
-**Output file:** `demo/output_abuseipdb_enriched.jsonl`
-
-The demo reads sample log events, enriches each IP address with AbuseIPDB data, applies the enrichment normalizer to produce compact output, and writes the enriched events to JSONL format.
 
 ## 6. Output Schema
 

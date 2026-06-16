@@ -1,18 +1,61 @@
+"""
+AbuseIPDB Threat Intelligence Provider.
+
+Queries the AbuseIPDB API for public IP reputation data and returns
+a compact :class:`IPEnrichment` object.  Private/internal/invalid IPs
+return ``None`` — they are simply not enriched.
+"""
+
 import os
-from typing import Any, Dict, Optional
+from collections import Counter
+from typing import Any, Dict, List, Optional
 
 import requests
 from dotenv import load_dotenv
 
 from soc_ai.enrichment.cache import JsonCache
-from soc_ai.enrichment.ip_utils import classify_ip, should_lookup_external
-from soc_ai.enrichment.schemas import EnrichmentResult
+from soc_ai.enrichment.ip_utils import should_lookup_external
+from soc_ai.enrichment.schemas import IPEnrichment
 
 
 load_dotenv()
 
 
+# ── AbuseIPDB category ID → human-readable name ─────────────────────────
+
+ABUSEIPDB_CATEGORY_MAP: Dict[int, str] = {
+    3:  "Fraud Orders",
+    4:  "DDoS Attack",
+    5:  "FTP Brute-Force",
+    6:  "Ping of Death",
+    7:  "Phishing",
+    8:  "Fraud VoIP",
+    9:  "Open Proxy",
+    10: "Web Spam",
+    11: "Email Spam",
+    12: "Blog Spam",
+    13: "VPN IP",
+    14: "Port Scan",
+    15: "Hacking",
+    16: "SQL Injection",
+    17: "Spoofing",
+    18: "Brute Force",
+    19: "Bad Web Bot",
+    20: "Exploited Host",
+    21: "Web App Attack",
+    22: "SSH",
+    23: "IoT Targeted",
+}
+
+
 class AbuseIPDBProvider:
+    """
+    Enrich public IP addresses with AbuseIPDB threat intelligence.
+
+    Returns an :class:`IPEnrichment` for public IPs, or ``None`` for
+    private / internal / invalid addresses (they are not enriched).
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -23,47 +66,59 @@ class AbuseIPDBProvider:
         self.api_key = api_key or os.getenv("ABUSEIPDB_API_KEY")
         self.base_url = base_url or os.getenv(
             "ABUSEIPDB_BASE_URL",
-            "https://api.abuseipdb.com/api/v2/check"
+            "https://api.abuseipdb.com/api/v2/check",
         )
-        self.max_age_days = max_age_days or int(os.getenv("ABUSEIPDB_MAX_AGE_DAYS", "90"))
-
+        self.max_age_days = max_age_days or int(
+            os.getenv("ABUSEIPDB_MAX_AGE_DAYS", "90")
+        )
         self.cache = cache or JsonCache(
             cache_file=".cache/abuseipdb_cache.json",
-            ttl_seconds=86400
+            ttl_seconds=86400,
         )
 
         if not self.api_key:
-            raise ValueError("Missing ABUSEIPDB_API_KEY. Please configure it in .env")
-
-    def lookup_ip(self, ip_value: str) -> EnrichmentResult:
-        ip_category, ip_reason = classify_ip(ip_value)
-
-        if not should_lookup_external(ip_value):
-            return self._build_skipped_result(
-                ip_value=ip_value,
-                ip_category=ip_category,
-                reason=ip_reason,
+            raise ValueError(
+                "Missing ABUSEIPDB_API_KEY. Please configure it in .env"
             )
 
+    # ── Public API ───────────────────────────────────────────────────────
+
+    def lookup(self, ip_value: str) -> Optional[IPEnrichment]:
+        """
+        Look up an IP address on AbuseIPDB.
+
+        Returns
+        -------
+        IPEnrichment or None
+            Enrichment data for public IPs; ``None`` for private/internal/
+            invalid addresses (no enrichment needed).
+        """
+        if not should_lookup_external(ip_value):
+            return None
+
+        # Check cache first
         cache_key = f"abuseipdb:ip:{ip_value}"
-        cached_result = self.cache.get(cache_key)
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return IPEnrichment(**cached)
 
-        if cached_result is not None:
-            return EnrichmentResult(**cached_result)
-
+        # Call API
         api_response = self._call_api(ip_value)
-        enrichment_result = self._normalize_response(ip_value, api_response)
+        enrichment = self._build_enrichment(api_response)
 
-        self.cache.set(cache_key, enrichment_result.to_dict())
+        # Cache the result (as dict for JSON serialisation)
+        self.cache.set(cache_key, enrichment.to_dict())
 
-        return enrichment_result
+        return enrichment
+
+    # ── API call ─────────────────────────────────────────────────────────
 
     def _call_api(self, ip_value: str) -> Dict[str, Any]:
+        """Call the AbuseIPDB check endpoint."""
         headers = {
             "Accept": "application/json",
             "Key": self.api_key,
         }
-
         params = {
             "ipAddress": ip_value,
             "maxAgeInDays": self.max_age_days,
@@ -77,14 +132,15 @@ class AbuseIPDBProvider:
                 params=params,
                 timeout=15,
             )
-
             response.raise_for_status()
-
             return response.json()
 
         except requests.exceptions.HTTPError as error:
-            status_code = error.response.status_code if error.response is not None else None
-
+            status_code = (
+                error.response.status_code
+                if error.response is not None
+                else None
+            )
             return {
                 "error": True,
                 "error_type": "http_error",
@@ -113,155 +169,103 @@ class AbuseIPDBProvider:
                 "message": "AbuseIPDB returned invalid JSON",
             }
 
-    def _normalize_response(
-        self,
-        ip_value: str,
-        api_response: Dict[str, Any],
-    ) -> EnrichmentResult:
+    # ── Build IPEnrichment from API response ─────────────────────────────
+
+    def _build_enrichment(self, api_response: Dict[str, Any]) -> IPEnrichment:
+        """Convert a raw API response into a compact IPEnrichment."""
+        # Handle error responses
         if api_response.get("error") is True:
-            return EnrichmentResult(
-                indicator_value=ip_value,
-                indicator_type="ip",
-                matched_source="AbuseIPDB",
+            return IPEnrichment(
+                source="AbuseIPDB",
                 confidence_score=0,
-                severity="unknown",
-                category="lookup_error",
-                tags=["lookup_error", api_response.get("error_type", "unknown_error")],
+                threat_severity="none",
                 reputation="unknown",
-                reason=api_response.get("message", "AbuseIPDB lookup failed"),
-                first_seen=None,
-                last_seen=None,
-                expiry_status="not_applicable",
-                raw=api_response,
+                category="lookup_error",
+                lookup_error=api_response.get("message", "Lookup failed"),
             )
 
         data = api_response.get("data", {})
-
-        abuse_confidence_score = int(data.get("abuseConfidenceScore", 0) or 0)
+        score = int(data.get("abuseConfidenceScore", 0) or 0)
         total_reports = int(data.get("totalReports", 0) or 0)
+        distinct_users = int(data.get("numDistinctUsers", 0) or 0)
 
-        severity = self._map_severity(abuse_confidence_score, total_reports)
-        reputation = self._map_reputation(abuse_confidence_score, total_reports)
-        category = self._map_category(abuse_confidence_score, total_reports)
-
-        tags = self._build_tags(data, abuse_confidence_score, total_reports)
-
-        reason = (
-            f"AbuseIPDB abuse confidence score is {abuse_confidence_score}; "
-            f"total reports: {total_reports}"
+        return IPEnrichment(
+            source="AbuseIPDB",
+            confidence_score=score,
+            threat_severity=self._map_severity(score, total_reports),
+            reputation=self._map_reputation(score, total_reports),
+            category=self._map_category(score, total_reports),
+            usage_type=data.get("usageType") or None,
+            is_tor=data.get("isTor") if data.get("isTor") is not None else None,
+            is_whitelisted=(
+                data.get("isWhitelisted")
+                if data.get("isWhitelisted") is not None
+                else None
+            ),
+            top_categories=self._extract_top_categories(data),
+            total_reports=total_reports if total_reports > 0 else None,
+            distinct_reporters=distinct_users if distinct_users > 0 else None,
+            last_seen=data.get("lastReportedAt") or None,
         )
 
-        return EnrichmentResult(
-            indicator_value=ip_value,
-            indicator_type="ip",
-            matched_source="AbuseIPDB",
-            confidence_score=abuse_confidence_score,
-            severity=severity,
-            category=category,
-            tags=tags,
-            reputation=reputation,
-            reason=reason,
-            first_seen=None,
-            last_seen=data.get("lastReportedAt"),
-            expiry_status="active",
-            raw=data,
-        )
+    # ── Mapping helpers ──────────────────────────────────────────────────
 
-    def _build_skipped_result(
-        self,
-        ip_value: str,
-        ip_category: str,
-        reason: str,
-    ) -> EnrichmentResult:
-        return EnrichmentResult(
-            indicator_value=ip_value,
-            indicator_type="ip",
-            matched_source="AbuseIPDB",
-            confidence_score=0,
-            severity="none",
-            category=ip_category,
-            tags=["skipped_external_lookup", ip_category],
-            reputation="not_applicable",
-            reason=reason,
-            first_seen=None,
-            last_seen=None,
-            expiry_status="not_applicable",
-            raw=None,
-        )
-
-    def _map_severity(self, abuse_confidence_score: int, total_reports: int) -> str:
-        if abuse_confidence_score >= 90:
+    @staticmethod
+    def _map_severity(score: int, total_reports: int) -> str:
+        if score >= 90:
             return "critical"
-
-        if abuse_confidence_score >= 70:
+        if score >= 70:
             return "high"
-
-        if abuse_confidence_score >= 30:
+        if score >= 30:
             return "medium"
-
-        if abuse_confidence_score > 0 or total_reports > 0:
+        if score > 0 or total_reports > 0:
             return "low"
-
         return "none"
 
-    def _map_reputation(self, abuse_confidence_score: int, total_reports: int) -> str:
-        if abuse_confidence_score >= 70:
+    @staticmethod
+    def _map_reputation(score: int, total_reports: int) -> str:
+        if score >= 70:
             return "malicious"
-
-        if abuse_confidence_score > 0 or total_reports > 0:
+        if score > 0 or total_reports > 0:
             return "suspicious"
-
         return "benign"
 
-    def _map_category(self, abuse_confidence_score: int, total_reports: int) -> str:
-        if abuse_confidence_score >= 70:
+    @staticmethod
+    def _map_category(score: int, total_reports: int) -> str:
+        if score >= 70:
             return "known_malicious"
-
-        if abuse_confidence_score > 0 or total_reports > 0:
+        if score > 0 or total_reports > 0:
             return "suspicious"
-
         return "clean"
 
-    def _build_tags(
-        self,
+    # ── Category extraction ──────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_top_categories(
         data: Dict[str, Any],
-        abuse_confidence_score: int,
-        total_reports: int,
-    ) -> list:
-        tags = ["public_ip"]
+        max_categories: int = 5,
+    ) -> Optional[List[str]]:
+        """
+        Extract the most frequent attack category names from reports.
 
-        usage_type = data.get("usageType")
-        country_code = data.get("countryCode")
-        isp = data.get("isp")
-        domain = data.get("domain")
-        is_tor = data.get("isTor")
-        is_whitelisted = data.get("isWhitelisted")
+        Returns None if there are no reports (avoids an empty list in output).
+        """
+        reports = data.get("reports") or []
+        if not isinstance(reports, list) or not reports:
+            return None
 
-        if abuse_confidence_score >= 70:
-            tags.append("abuseipdb_high_confidence")
+        counter: Counter = Counter()
+        for report in reports:
+            categories = report.get("categories") or []
+            if not isinstance(categories, list):
+                continue
+            for cat_id in categories:
+                name = ABUSEIPDB_CATEGORY_MAP.get(
+                    cat_id, f"category:{cat_id}"
+                )
+                counter[name] += 1
 
-        elif abuse_confidence_score > 0:
-            tags.append("abuseipdb_low_confidence")
+        if not counter:
+            return None
 
-        if total_reports > 0:
-            tags.append("reported_ip")
-
-        if usage_type:
-            tags.append(f"usage_type:{usage_type}")
-
-        if country_code:
-            tags.append(f"country:{country_code}")
-
-        if isp:
-            tags.append("has_isp")
-
-        if domain:
-            tags.append("has_domain")
-
-        if is_tor is True:
-            tags.append("tor_exit_node")
-
-        if is_whitelisted is True:
-            tags.append("abuseipdb_whitelisted")
-
-        return tags
+        return [name for name, _ in counter.most_common(max_categories)]

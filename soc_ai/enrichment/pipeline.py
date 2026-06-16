@@ -1,131 +1,192 @@
+"""
+Enrichment pipeline — reads normalized logs, enriches public IPs,
+and writes EnrichedLog output.
+
+Flow:
+    NormalizedLog JSONL  →  LogEnricher  →  EnrichedLog JSONL
+
+Usage (CLI):
+    python -m soc_ai.enrichment.pipeline <input_jsonl> <output_jsonl>
+
+Usage (API):
+    from soc_ai.enrichment.pipeline import enrich_pipeline
+
+    enrich_pipeline(
+        input_file="output/normalized_fortigate.jsonl",
+        output_file="output/enriched_fortigate.jsonl",
+    )
+"""
+
+import argparse
 import json
-import uuid
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 from soc_ai.enrichment.providers.abuseipdb import AbuseIPDBProvider
-from soc_ai.enrichment.schemas import EnrichedEvent, EnrichmentResult
-from soc_ai.enrichment.normalizers.abuseipdb_normalizer import AbuseIPDBEnrichmentNormalizer
+from soc_ai.enrichment.schemas import EnrichedLog, IPEnrichment
+from soc_ai.normalized.schemas import NormalizedLog
 
 
-DEFAULT_IP_FIELDS = [
-    "source_ip",
-    "src_ip",
-    "client_ip",
-    "remote_ip",
-    "destination_ip",
-    "dst_ip",
-]
+class LogEnricher:
+    """
+    Enrich NormalizedLog entries with threat intelligence data.
 
+    For each log, public IP addresses (src_ip, dst_ip) are looked up
+    via the configured provider(s).  Private/internal/invalid IPs are
+    skipped automatically — they do not appear in the output at all.
 
-class AbuseIPDBLogEnricher:
+    The enrichment result is a dict keyed by IP address for O(1) lookup.
+    """
+
     def __init__(
         self,
-        provider: Optional[AbuseIPDBProvider] = None,
-        ip_fields: Optional[List[str]] = None,
-        normalizer: Optional[AbuseIPDBEnrichmentNormalizer] = None,
+        abuseipdb: Optional[AbuseIPDBProvider] = None,
     ):
-        self.provider = provider or AbuseIPDBProvider()
-        self.ip_fields = ip_fields or DEFAULT_IP_FIELDS
-        self.normalizer = normalizer or AbuseIPDBEnrichmentNormalizer()
+        self.abuseipdb = abuseipdb or AbuseIPDBProvider()
 
-    def enrich_event(self, event: Dict) -> EnrichedEvent:
-        event_id = str(
-            event.get("event_id")
-            or event.get("id")
-            or event.get("request_id")
-            or uuid.uuid4()
-        )
+    def enrich(self, log: NormalizedLog) -> EnrichedLog:
+        """
+        Enrich a single NormalizedLog and return an EnrichedLog.
 
-        enrichments: List[EnrichmentResult] = []
-        seen_ips = set()
+        Public IPs are looked up on AbuseIPDB.  Private/internal IPs
+        are silently skipped (no entry in the enrichments dict).
+        Duplicate IPs within the same log are looked up only once.
+        """
+        enrichments: Dict[str, IPEnrichment] = {}
+        seen_ips: set = set()
 
-        for field_name in self.ip_fields:
-            ip_value = event.get(field_name)
-
-            if not ip_value:
+        # Collect unique IPs from src_ip and dst_ip
+        for ip in (log.src_ip, log.dst_ip):
+            if not ip or ip in seen_ips:
                 continue
+            seen_ips.add(ip)
 
-            ip_value = str(ip_value).strip()
+            result = self.abuseipdb.lookup(ip)
+            if result is not None:
+                enrichments[ip] = result
 
-            if ip_value in seen_ips:
-                continue
+        return EnrichedLog.from_normalized(log, enrichments)
 
-            seen_ips.add(ip_value)
+    def enrich_batch(
+        self,
+        logs: List[NormalizedLog],
+    ) -> List[EnrichedLog]:
+        """Enrich a batch of NormalizedLog entries."""
+        return [self.enrich(log) for log in logs]
 
-            result = self.provider.lookup_ip(ip_value)
-            result = self.normalizer.compact(result)
+def read_normalized_jsonl(input_file: str) -> List[NormalizedLog]:
+    """
+    Read a JSONL file of normalized logs and return NormalizedLog objects.
 
-            raw_data = result.raw if isinstance(result.raw, dict) else {}
-            raw_data = dict(raw_data)
-            raw_data["event_field"] = field_name
+    Malformed lines are captured as failed-parse NormalizedLog entries
+    rather than being dropped silently.
+    """
+    logs: List[NormalizedLog] = []
 
-            enrichments.append(
-                EnrichmentResult(
-                    indicator_value=result.indicator_value,
-                    indicator_type=result.indicator_type,
-                    matched_source=result.matched_source,
-                    confidence_score=result.confidence_score,
-                    severity=result.severity,
-                    category=result.category,
-                    tags=result.tags + [f"event_field:{field_name}"],
-                    reputation=result.reputation,
-                    reason=result.reason,
-                    first_seen=result.first_seen,
-                    last_seen=result.last_seen,
-                    expiry_status=result.expiry_status,
-                    raw=raw_data,
-                )
-            )
-
-        return EnrichedEvent(
-            event_id=event_id,
-            original_event=event,
-            enrichments=enrichments,
-        )
-
-    def enrich_events(self, events: Iterable[Dict]) -> List[EnrichedEvent]:
-        return [
-            self.enrich_event(event)
-            for event in events
-        ]
-
-
-def read_jsonl(input_file: str) -> List[Dict]:
-    events = []
-
-    with open(input_file, "r", encoding="utf-8") as file:
-        for line_number, line in enumerate(file, start=1):
+    with open(input_file, "r", encoding="utf-8") as fh:
+        for line_number, line in enumerate(fh, start=1):
             line = line.strip()
-
             if not line:
                 continue
 
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError as error:
-                events.append(
-                    {
-                        "event_id": f"malformed-line-{line_number}",
-                        "parse_error": True,
-                        "error_message": str(error),
-                        "raw_line": line,
-                    }
+                data = json.loads(line)
+                logs.append(NormalizedLog(**data))
+            except (json.JSONDecodeError, TypeError) as exc:
+                logs.append(
+                    NormalizedLog(
+                        event_id=f"malformed-line-{line_number}",
+                        timestamp="",
+                        log_source="unknown",
+                        log_type="unknown",
+                        log_subtype="unknown",
+                        severity="info",
+                        device_name="",
+                        device_id="",
+                        virtual_domain="",
+                        raw_log=line,
+                        parse_status="failed",
+                        parse_errors=[str(exc)],
+                    )
                 )
 
-    return events
+    return logs
 
 
-def write_jsonl(output_file: str, enriched_events: List[EnrichedEvent]) -> None:
+def write_enriched_jsonl(
+    output_file: str,
+    enriched_logs: List[EnrichedLog],
+) -> None:
+    """Write a list of EnrichedLog objects to a JSONL file."""
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("w", encoding="utf-8") as file:
-        for enriched_event in enriched_events:
-            file.write(
-                json.dumps(
-                    enriched_event.to_dict(),
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+    with output_path.open("w", encoding="utf-8") as fh:
+        for log in enriched_logs:
+            fh.write(json.dumps(log.to_dict(), ensure_ascii=False) + "\n")
+
+
+# ── Pipeline entry point ────────────────────────────────────────────────
+
+def enrich_pipeline(
+    input_file: str,
+    output_file: str,
+) -> List[EnrichedLog]:
+    """
+    Full enrichment pipeline: read normalized JSONL → enrich → write JSONL.
+
+    Parameters
+    ----------
+    input_file : str
+        Path to the normalised JSONL file (output of the normalize pipeline).
+    output_file : str
+        Path for the enriched JSONL output.
+
+    Returns
+    -------
+    list[EnrichedLog]
+    """
+    normalized_logs = read_normalized_jsonl(input_file)
+    print(f"[+] Read {len(normalized_logs)} normalized logs from: {input_file}")
+
+    enricher = LogEnricher()
+    enriched_logs = enricher.enrich_batch(normalized_logs)
+
+    # Summary
+    total_enriched_ips = sum(len(e.enrichments) for e in enriched_logs)
+    logs_with_enrichment = sum(1 for e in enriched_logs if e.enrichments)
+
+    print(f"[+] Enriched {total_enriched_ips} unique public IPs "
+          f"across {logs_with_enrichment}/{len(enriched_logs)} logs")
+
+    write_enriched_jsonl(output_file, enriched_logs)
+    print(f"[+] Output saved to: {output_file}")
+
+    return enriched_logs
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Enrich normalized logs with threat intelligence",
+    )
+    parser.add_argument(
+        "input_file",
+        help="Path to the normalized JSONL file",
+    )
+    parser.add_argument(
+        "output_file",
+        help="Path for the enriched JSONL output",
+    )
+
+    args = parser.parse_args()
+
+    enrich_pipeline(
+        input_file=args.input_file,
+        output_file=args.output_file,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,7 +1,0 @@
-{"event_id":"evt-001","timestamp":"2026-06-09T08:00:00Z","log_source":"aws_waf","source_ip":"43.159.177.40","destination_ip":"10.0.0.15","http_method":"GET","uri":"/login","action":"ALLOW","status_code":200}
-{"event_id":"evt-002","timestamp":"2026-06-09T08:01:00Z","log_source":"firewall","source_ip":"136.110.35.182","destination_ip":"192.168.1.20","destination_port":443,"action":"ALLOW"}
-{"event_id":"evt-003","timestamp":"2026-06-09T08:02:00Z","log_source":"windows_event","source_ip":"192.168.1.100","destination_ip":"10.0.0.5","username":"demo_user","event_type":"login_success"}
-{"event_id":"evt-004","timestamp":"2026-06-09T08:03:00Z","log_source":"endpoint","source_ip":"not-an-ip","destination_ip":"8.8.4.4","process_name":"demo.exe","action":"network_connection"}
-{"event_id":"evt-005","timestamp":"2026-06-09T08:04:00Z","log_source":"vpc_flow","src_ip":"208.67.222.222","dst_ip":"10.10.10.10","protocol":"TCP","dst_port":53,"action":"ACCEPT"}
-{"event_id":"evt-006","timestamp":"2026-06-09T04:01:15+00:00","event_type":"firewall_connection","src_ip":"187.251.123.104","src_port":59071,"dst_ip":"10.0.1.50","dst_port":22,"protocol":"TCP","action":"ALLOW","device_id":"fw-prod-01","message":"Incoming connection attempt to SSH service"}
-{"event_id":"evt-007","timestamp":"2026-06-09T04:02:27+00:00","event_type":"auth_failure","src_ip":"187.251.123.104","dst_ip":"10.0.1.50","user":"root","service":"sshd","error_code":"AUTH_FAIL","message":"Failed password for invalid user root from 187.251.123.104 port 47483 ssh2","log_source":"linux_auth"}
