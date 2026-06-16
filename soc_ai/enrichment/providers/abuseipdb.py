@@ -56,6 +56,9 @@ class AbuseIPDBProvider:
     private / internal / invalid addresses (they are not enriched).
     """
 
+    # confidence_score >= this threshold → is_malicious = True
+    MALICIOUS_THRESHOLD = 50
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -178,6 +181,7 @@ class AbuseIPDBProvider:
             return IPEnrichment(
                 source="AbuseIPDB",
                 confidence_score=0,
+                is_malicious=False,
                 threat_severity="none",
                 reputation="unknown",
                 category="lookup_error",
@@ -189,12 +193,17 @@ class AbuseIPDBProvider:
         total_reports = int(data.get("totalReports", 0) or 0)
         distinct_users = int(data.get("numDistinctUsers", 0) or 0)
 
+        is_malicious = score >= self.MALICIOUS_THRESHOLD
+
         return IPEnrichment(
             source="AbuseIPDB",
             confidence_score=score,
+            is_malicious=is_malicious,
             threat_severity=self._map_severity(score, total_reports),
             reputation=self._map_reputation(score, total_reports),
             category=self._map_category(score, total_reports),
+            country=data.get("countryCode") or None,
+            city=data.get("city") or None,
             usage_type=data.get("usageType") or None,
             is_tor=data.get("isTor") if data.get("isTor") is not None else None,
             is_whitelisted=(

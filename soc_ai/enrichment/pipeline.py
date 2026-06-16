@@ -103,7 +103,6 @@ def read_normalized_jsonl(input_file: str) -> List[NormalizedLog]:
                         severity="info",
                         device_name="",
                         device_id="",
-                        virtual_domain="",
                         raw_log=line,
                         parse_status="failed",
                         parse_errors=[str(exc)],

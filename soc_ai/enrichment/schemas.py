@@ -4,9 +4,13 @@ Data models for the Enrichment module.
 IPEnrichment  — compact threat-intelligence data for a single public IP.
 EnrichedLog   — a NormalizedLog with enrichment data attached.
 
-Design principles (v2):
-  - No duplication: fields already in NormalizedLog (src_ip, dst_ip,
-    src_country, etc.) are NOT repeated in the enrichment.
+Design principles (v3):
+  - No duplication: fields already in NormalizedLog (src_ip, dst_ip)
+    are NOT repeated in the enrichment.
+  - Geo fields (country, city) are stored per-IP in IPEnrichment, so they
+    naturally become src_country / dst_country when looked up by IP key.
+  - is_malicious: derived boolean (confidence_score >= threshold) for
+    quick filtering in downstream rules.
   - No noise: private/internal/invalid IPs are simply not enriched
     (they do not appear in the ``enrichments`` dict at all).
   - Dict-keyed by IP: O(1) lookup instead of scanning a list.
@@ -32,9 +36,14 @@ class IPEnrichment:
 
     source: str                         # Provider name (e.g. "AbuseIPDB")
     confidence_score: int               # Abuse confidence score (0-100)
+    is_malicious: bool                  # True if confidence_score >= 50
     threat_severity: str                # critical / high / medium / low / none
     reputation: str                     # malicious / suspicious / benign / unknown
     category: str                       # known_malicious / suspicious / clean
+
+    # ── Geo (from provider) ──────────────────────────────────────────
+    country: Optional[str] = None       # 2-letter country code (e.g. "US", "VN")
+    city: Optional[str] = None          # City name (e.g. "Ho Chi Minh City")
 
     # ── Context (only when available) ────────────────────────────────
     usage_type: Optional[str] = None    # e.g. "Data Center/Web Hosting/Transit"
@@ -97,17 +106,12 @@ class EnrichedLog(NormalizedLog):
             severity=normalized.severity,
             device_name=normalized.device_name,
             device_id=normalized.device_id,
-            virtual_domain=normalized.virtual_domain,
             src_ip=normalized.src_ip,
             dst_ip=normalized.dst_ip,
             src_port=normalized.src_port,
             dst_port=normalized.dst_port,
             protocol=normalized.protocol,
             action=normalized.action,
-            src_interface=normalized.src_interface,
-            dst_interface=normalized.dst_interface,
-            src_country=normalized.src_country,
-            dst_country=normalized.dst_country,
             detail=normalized.detail,
             raw_log=normalized.raw_log,
             parse_status=normalized.parse_status,

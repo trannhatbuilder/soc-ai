@@ -30,7 +30,6 @@ class NormalizedLog:
     # ── Device info ──────────────────────────────────────────────────
     device_name: str        # devname / hostname
     device_id: str          # devid / device serial
-    virtual_domain: str     # vd / VDOM
 
     # ── Network (nullable for non-network events) ────────────────────
     src_ip: Optional[str] = None
@@ -39,12 +38,7 @@ class NormalizedLog:
     dst_port: Optional[int] = None
     protocol: Optional[str] = None       # Human-readable protocol name
     action: Optional[str] = None
-    src_interface: Optional[str] = None
-    dst_interface: Optional[str] = None
-
-    # ── Geo ──────────────────────────────────────────────────────────
-    src_country: Optional[str] = None
-    dst_country: Optional[str] = None
+    
 
     # ── Type-specific fields (preserved as-is) ───────────────────────
     detail: Dict[str, Any] = field(default_factory=dict)
