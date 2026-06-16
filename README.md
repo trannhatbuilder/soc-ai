@@ -57,29 +57,6 @@ The enrichment normalizer converts raw AbuseIPDB enrichment results into a compa
 - Reduces storage footprint while preserving context
 - Configurable limits for comments and categories
 
-**Compact Output Structure:**
-```json
-{
-  "summary": {
-    "total_reports": 6833,
-    "distinct_reporters": 1265,
-    "country_code": "US",
-    "usage_type": "Data Center/Web Hosting/Transit",
-    "isp": "Asia Pacific Network Information Center, Pty. Ltd.",
-    "domain": "apnic.net",
-    "is_tor": false,
-    "is_whitelisted": false,
-    "top_categories": ["Brute Force", "SSH", "Web App Attack"],
-    "sample_report_comments": ["comment 1", "comment 2", "comment 3"]
-  },
-  "raw_ref": {
-    "provider": "AbuseIPDB",
-    "raw_stored": false,
-    "normalized_version": "1.0"
-  }
-}
-```
-
 ## 3. Project Structure
 
 ```
