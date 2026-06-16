@@ -54,12 +54,13 @@ KV_PATTERN = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|[^\s]+)')
 
 # Fields already mapped to top-level NormalizedLog attributes
 # (excluded from the detail dict to avoid duplication)
+# Note: Fields like srccountry, dstcountry, srcintf, dstintf are intentionally
+# excluded here so they end up in the 'detail' dict, not in the core schema.
 _SKIP_DETAIL_KEYS = {
-    "date", "time", "tz", "devname", "devid", "vd",
+    "date", "time", "tz", "devname", "devid",
     "type", "subtype", "level", "severity",
     "srcip", "dstip", "srcport", "dstport",
-    "proto", "action", "srcintf", "dstintf",
-    "srccountry", "dstcountry", "eventtime",
+    "proto", "action", "eventtime",
     "remip", "locip",  # VPN fields mapped to src_ip / dst_ip
 }
 
@@ -97,14 +98,10 @@ def parse_fortigate_line(line: str) -> NormalizedLog:
     src_intf = fields.get("srcintf")
     dst_intf = fields.get("dstintf")
 
-    # 6. Geo information
-    src_country = fields.get("srccountry")
-    dst_country = fields.get("dstcountry")
-
-    # 7. Build detail dict (remaining fields not mapped to top-level)
+    # 6. Build detail dict (remaining fields not mapped to top-level)
     detail = _build_detail(fields, syslog_host)
 
-    # 8. Generate event_id
+    # 7. Generate event_id
     event_id = _build_event_id(fields, timestamp)
 
     parse_status = "partial" if parse_errors else "success"
@@ -118,17 +115,12 @@ def parse_fortigate_line(line: str) -> NormalizedLog:
         severity=severity,
         device_name=fields.get("devname", ""),
         device_id=fields.get("devid", ""),
-        virtual_domain=fields.get("vd", ""),
         src_ip=src_ip,
         dst_ip=dst_ip,
         src_port=src_port,
         dst_port=dst_port,
         protocol=protocol,
         action=action,
-        src_interface=src_intf,
-        dst_interface=dst_intf,
-        src_country=src_country,
-        dst_country=dst_country,
         detail=detail,
         raw_log=line,
         parse_status=parse_status,

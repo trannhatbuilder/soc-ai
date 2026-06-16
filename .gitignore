@@ -1,35 +1,42 @@
-# Python
+```
+# Compiled Python files
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg-info/
-*.egg
-dist/
-build/
 
-# Virtual environment
+# Dependencies
 .venv/
 venv/
-env/
+node_modules/
 
-# Cache
-.cache/
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
 
-# Environment variables (chứa API key thật)
+# Environment files
 .env
+.env.local
+*.env.*
 
-# IDE
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
-# OS
+# Build artifacts
+dist/
+build/
+target/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# OS generated files
 .DS_Store
 Thumbs.db
-Desktop.ini
 
-# Logs
-*.log
+# Testing
+.mypy_cache/
+.pytest_cache/
+```
