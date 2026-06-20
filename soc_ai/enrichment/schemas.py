@@ -2,7 +2,18 @@
 Data models for the Enrichment module.
 
 IPEnrichment  — compact threat-intelligence data for a single public IP.
-EnrichedLog   — a NormalizedLog with enrichment data attached.
+EnrichedLog   — a DeduplicatedLog with enrichment data attached.
+
+Class hierarchy (matches the pipeline order):
+
+    NormalizedLog
+        └── DeduplicatedLog        (adds dedup_key, dedup_count)
+                └── EnrichedLog    (adds enrichments dict)
+
+This means an EnrichedLog carries the full lineage of every prior
+pipeline stage: normalization fields + dedup metadata + enrichment
+data. Downstream stages (aggregation, AI analysis, alerting) can
+read every field they need from a single object.
 
 Design principles (v3):
   - No duplication: fields already in NormalizedLog (src_ip, dst_ip)
@@ -15,13 +26,14 @@ Design principles (v3):
     (they do not appear in the ``enrichments`` dict at all).
   - Dict-keyed by IP: O(1) lookup instead of scanning a list.
   - Renamed ``threat_severity`` to avoid clash with NormalizedLog.severity.
-  - Removed low-value fields: first_seen, expiry_status, indicator_type,
+  - Removed low-value fields: first_seen, last_seen, expiry_status,
     raw_ref, tags, reason.
 """
 
 from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional
 
+from soc_ai.dedup.schemas import DeduplicatedLog
 from soc_ai.normalized.schemas import NormalizedLog
 
 
@@ -43,7 +55,6 @@ class IPEnrichment:
 
     # ── Geo (from provider) ──────────────────────────────────────────
     country: Optional[str] = None       # 2-letter country code (e.g. "US", "VN")
-    city: Optional[str] = None          # City name (e.g. "Ho Chi Minh City")
 
     # ── Context (only when available) ────────────────────────────────
     usage_type: Optional[str] = None    # e.g. "Data Center/Web Hosting/Transit"
@@ -52,7 +63,6 @@ class IPEnrichment:
     top_categories: Optional[List[str]] = None  # Top attack categories
     total_reports: Optional[int] = None        # Total report count
     distinct_reporters: Optional[int] = None   # Number of distinct reporters
-    last_seen: Optional[str] = None     # Last reported timestamp
 
     # ── Error tracking (for failed lookups) ──────────────────────────
     lookup_error: Optional[str] = None  # Error description if lookup failed
@@ -64,13 +74,20 @@ class IPEnrichment:
 
 
 @dataclass
-class EnrichedLog(NormalizedLog):
+class EnrichedLog(DeduplicatedLog):
     """
-    A NormalizedLog with enrichment data attached.
+    A :class:`DeduplicatedLog` with threat-intelligence enrichment attached.
 
-    The ``enrichments`` dict is keyed by public IP address, so looking up
-    the enrichment for a specific IP is O(1).  Private/internal/invalid IPs
-    are NOT present — they are simply skipped during enrichment.
+    Inherits all fields from :class:`DeduplicatedLog` (which in turn
+    inherits from :class:`NormalizedLog`), and adds an ``enrichments``
+    dict keyed by public IP address. Looking up the enrichment for a
+    specific IP is O(1). Private/internal/invalid IPs are NOT present
+    — they are simply skipped during enrichment.
+
+    Carrying the dedup metadata (``dedup_key``, ``dedup_count``) through
+    to the enriched output lets downstream stages (e.g. aggregation)
+    weight events correctly: a log with ``dedup_count=5`` represents
+    five collapsed raw entries, not just one.
     """
 
     enrichments: Dict[str, IPEnrichment] = field(default_factory=dict)
@@ -86,39 +103,111 @@ class EnrichedLog(NormalizedLog):
         return result
 
     @classmethod
-    def from_normalized(
+    def from_deduplicated(
         cls,
-        normalized: NormalizedLog,
+        dedup: DeduplicatedLog,
         enrichments: Optional[Dict[str, IPEnrichment]] = None,
     ) -> "EnrichedLog":
         """
-        Create an EnrichedLog from a NormalizedLog instance.
+        Build an :class:`EnrichedLog` from a :class:`DeduplicatedLog`.
 
-        All fields from NormalizedLog are carried over; ``enrichments``
-        defaults to an empty dict if not provided.
+        This is the primary factory used by the enrichment pipeline:
+        every field of the deduplicated log (including ``dedup_key``
+        and ``dedup_count``) is carried over, and the supplied
+        ``enrichments`` dict is attached.
+
+        Parameters
+        ----------
+        dedup : DeduplicatedLog
+            The source deduplicated log entry.
+        enrichments : dict[str, IPEnrichment], optional
+            Threat-intelligence enrichments keyed by public IP.
+            Defaults to an empty dict.
+
+        Returns
+        -------
+        EnrichedLog
         """
         return cls(
-            event_id=normalized.event_id,
-            timestamp=normalized.timestamp,
-            log_source=normalized.log_source,
-            log_type=normalized.log_type,
-            log_subtype=normalized.log_subtype,
-            severity=normalized.severity,
-            device_name=normalized.device_name,
-            device_id=normalized.device_id,
-            src_ip=normalized.src_ip,
-            dst_ip=normalized.dst_ip,
-            src_port=normalized.src_port,
-            dst_port=normalized.dst_port,
-            protocol=normalized.protocol,
-            action=normalized.action,
-            detail=normalized.detail,
-            raw_log=normalized.raw_log,
-            parse_status=normalized.parse_status,
-            parse_errors=list(normalized.parse_errors),
-            normalizer_version=normalized.normalizer_version,
+            event_id=dedup.event_id,
+            timestamp=dedup.timestamp,
+            log_source=dedup.log_source,
+            log_type=dedup.log_type,
+            log_subtype=dedup.log_subtype,
+            severity=dedup.severity,
+            device_name=dedup.device_name,
+            device_id=dedup.device_id,
+            src_ip=dedup.src_ip,
+            dst_ip=dedup.dst_ip,
+            src_port=dedup.src_port,
+            dst_port=dedup.dst_port,
+            protocol=dedup.protocol,
+            action=dedup.action,
+            detail=dedup.detail,
+            raw_log=dedup.raw_log,
+            parse_status=dedup.parse_status,
+            parse_errors=list(dedup.parse_errors),
+            normalizer_version=dedup.normalizer_version,
+            dedup_key=dedup.dedup_key,
+            dedup_count=dedup.dedup_count,
             enrichments=enrichments or {},
         )
+
+    # @classmethod
+    # def from_normalized(
+    #     cls,
+    #     normalized: NormalizedLog,
+    #     enrichments: Optional[Dict[str, IPEnrichment]] = None,
+    # ) -> "EnrichedLog":
+    #     """
+    #     Build an :class:`EnrichedLog` from a :class:`NormalizedLog`.
+
+    #     Convenience factory for callers that have a NormalizedLog in
+    #     hand but did not run it through the dedup pipeline. The dedup
+    #     metadata fields are filled with neutral defaults
+    #     (``dedup_key=""``, ``dedup_count=1``).
+
+    #     Prefer :meth:`from_deduplicated` in the standard pipeline
+    #     (normalize -> dedup -> enrich) so that the dedup metadata is
+    #     preserved end-to-end.
+
+    #     Parameters
+    #     ----------
+    #     normalized : NormalizedLog
+    #         The source normalized log entry.
+    #     enrichments : dict[str, IPEnrichment], optional
+    #         Threat-intelligence enrichments keyed by public IP.
+    #         Defaults to an empty dict.
+
+    #     Returns
+    #     -------
+    #     EnrichedLog
+    #     """
+    #     return cls(
+    #         event_id=normalized.event_id,
+    #         timestamp=normalized.timestamp,
+    #         log_source=normalized.log_source,
+    #         log_type=normalized.log_type,
+    #         log_subtype=normalized.log_subtype,
+    #         severity=normalized.severity,
+    #         device_name=normalized.device_name,
+    #         device_id=normalized.device_id,
+    #         src_ip=normalized.src_ip,
+    #         dst_ip=normalized.dst_ip,
+    #         src_port=normalized.src_port,
+    #         dst_port=normalized.dst_port,
+    #         protocol=normalized.protocol,
+    #         action=normalized.action,
+    #         detail=normalized.detail,
+    #         raw_log=normalized.raw_log,
+    #         parse_status=normalized.parse_status,
+    #         parse_errors=list(normalized.parse_errors),
+    #         normalizer_version=normalized.normalizer_version,
+    #         dedup_key="",
+    #         dedup_count=1,
+    #         enrichments=enrichments or {},
+    #     )
+
 
 def _remove_empty_values(data: Dict[str, Any]) -> Dict[str, Any]:
     """Remove keys whose values are None, empty string, empty list, or empty dict."""

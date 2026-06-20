@@ -16,8 +16,9 @@ env/
 # Cache
 .cache/
 
-# Environment variables (chứa API key thật)
+# Environment variables (contains a real API key)
 .env
+.env.*
 
 # IDE
 .vscode/

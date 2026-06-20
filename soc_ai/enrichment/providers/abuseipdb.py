@@ -214,7 +214,6 @@ class AbuseIPDBProvider:
             top_categories=self._extract_top_categories(data),
             total_reports=total_reports if total_reports > 0 else None,
             distinct_reporters=distinct_users if distinct_users > 0 else None,
-            last_seen=data.get("lastReportedAt") or None,
         )
 
     # ── Mapping helpers ──────────────────────────────────────────────────

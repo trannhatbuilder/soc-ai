@@ -22,12 +22,13 @@ Current enrichment flow:
 
 ```text
 Raw Logs
-  -> Normalize Logs
-  -> Enrichment (AbuseIPDB Lookup)
-  -> Enrichment Normalization (compact format for deduplication)
-  -> Deduplicate Logs
-  -> Log Aggregation
-  -> AI Log Analysis
+      -> Normalize Logs
+      -> Deduplicate Logs          
+      -> Data Enrichment
+      -> Log Aggregation
+      -> AI Log Analysis
+      -> Alert Detection
+      -> Send Alert to Telegram
 ```
 
 ## 2. Current Features
@@ -124,8 +125,17 @@ cd soc-ai
 # Step 1: Normalize
 python -m soc_ai.normalized.pipeline raw_logs/03_fortigate_firewall.txt output/normalized_fortigate.jsonl
 
-# Step 2: Enrich
-python -m soc_ai.enrichment.pipeline output/normalized_fortigate.jsonl output/enriched_fortigate.jsonl
+# Step 2: Deduplicate
+python -m soc_ai.dedup.pipeline output/normalized_fortigate.jsonl output/deduplicated_fortigate.jsonl
+
+# Step 3: Enrich
+python -m soc_ai.enrichment.pipeline output/deduplicated_fortigate.jsonl output/enriched_fortigate.jsonl
+
+# 4. Aggregate 
+python -m soc_ai.aggregation.pipeline output/enriched_fortigate.jsonl output/aggregated_fortigate.jsonl
+
+# 5. Analysis
+python -m soc_ai.ai.pipeline output/aggregated_fortigate.jsonl output/analyzed_fortigate.jsonl
 ```
 
 ## 6. Output Schema
