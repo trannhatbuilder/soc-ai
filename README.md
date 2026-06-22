@@ -1,102 +1,106 @@
-# SOC AI Enrichment Module
+# SOC-AI
 
-This project implements the Threat Intelligence Enrichment layer for SOC AI.
+SOC-AI is an automated security log analysis pipeline that ingests FortiGate firewall logs, enriches them with threat intelligence, analyzes them with an LLM, and sends real-time alerts to Telegram when threats are detected.
 
-The current completed modules are:
-
-- AbuseIPDB IP Reputation Lookup
-- AbuseIPDB Enrichment Normalizer (for deduplication/aggregation stage)
-
-Upcoming modules:
-
-- VirusTotal Lookup
-- VirusTotal Enrichment Normalizer
+```text
+Raw Logs -> Normalize -> Deduplicate -> Enrich -> Aggregate -> AI Analysis -> Alert Detection -> Send Telegram
+                                                                                                  |
+                                                                                       No alert for 1 hour?
+                                                                                                  |
+                                                                                       Send heartbeat message
+```
 
 ---
 
-## 1. Objective
+## 1. Pipeline Stages
 
-The objective of this module is to enrich normalized security logs with external threat intelligence context before the logs are passed to later SOC AI stages such as deduplication, aggregation, correlation, investigation, and AI log analysis.
+| # | Stage | Module | Input | Output |
+|---|-------|--------|-------|--------|
+| 1 | Normalize | `soc_ai.normalized` | Raw FortiGate syslog | `NormalizedLog` JSONL |
+| 2 | Deduplicate | `soc_ai.dedup` | NormalizedLog JSONL | `DeduplicatedLog` JSONL |
+| 3 | Enrich | `soc_ai.enrichment` | DeduplicatedLog JSONL | `EnrichedLog` JSONL |
+| 4 | Aggregate | `soc_ai.aggregation` | EnrichedLog JSONL | `AggregatedLog` JSONL (5-min windows) |
+| 5 | AI Analysis | `soc_ai.ai` | AggregatedLog JSONL | `AnalyzedLog` JSONL |
+| 6 | Alert Detection | `soc_ai.alert` | AnalyzedLog JSONL | AlertEvent / HeartbeatEvent JSONL |
+| 7 | Send Telegram | `soc_ai.telegram` | Events JSONL | Telegram messages |
 
-Current enrichment flow:
+### Alert Detection Logic
 
-```text
-Raw Logs
-      -> Normalize Logs
-      -> Deduplicate Logs          
-      -> Data Enrichment
-      -> Log Aggregation
-      -> AI Log Analysis
-      -> Alert Detection
-      -> Send Alert to Telegram
-```
+- **Alert** — When `verdict.should_alert == True`, an `AlertEvent` is created and sent to Telegram immediately.
+- **Heartbeat** — When 1 hour passes with no alerts, a `HeartbeatEvent` (liveness message) is sent to confirm the pipeline is still running.
+- The 1-hour timer is persisted to `.cache/alert_state.json` so it survives across pipeline runs.
 
-## 2. Current Features
+---
 
-### 2.1 AbuseIPDB Lookup
-The AbuseIPDB lookup module supports:
-
-- Public IP reputation lookup
-- Private/internal IP detection
-- Malformed IP detection
-- Reserved/link-local/loopback IP handling
-- Local JSON cache with TTL
-- Structured enrichment output
-- JSONL input/output demo
-- Local demo execution
-
-The AbuseIPDB API check endpoint accepts one IPv4 or IPv6 address and supports parameters such as ipAddress, maxAgeInDays, and verbose. The response data is returned under the data object and can include fields such as abuseConfidenceScore, countryCode, usageType, isp, domain, totalReports, and lastReportedAt.
-
-### 2.2 AbuseIPDB Enrichment Normalizer (Deduplicate Logs Stage)
-
-The enrichment normalizer converts raw AbuseIPDB enrichment results into a compact, analyst-friendly format optimized for downstream deduplication and aggregation stages.
-
-**Features:**
-- Extracts top attack categories from reports
-- Samples unique report comments (deduplicated)
-- Builds concise summary with key metadata
-- Reduces storage footprint while preserving context
-- Configurable limits for comments and categories
-
-## 3. Project Structure
+## 2. Project Structure
 
 ```
 soc-ai/
-├── raw_logs/03_fortigate_firewall.txt
+├── raw_logs/
+│   └── 03_fortigate_firewall.txt
 ├── output/
-│   ├── normalized_fortigate.jsonl     ← Step 1 output
-│   └── enriched_fortigate.jsonl       ← Step 2 output
+│   ├── normalized_fortigate.jsonl
+│   ├── deduplicated_fortigate.jsonl
+│   ├── enriched_fortigate.jsonl
+│   ├── aggregated_fortigate.jsonl
+│   ├── analyzed_fortigate.jsonl
+│   └── alerts_fortigate.jsonl
 ├── soc_ai/
+│   ├── normalized/
+│   │   ├── schemas.py
+│   │   ├── normalizer.py
+│   │   ├── pipeline.py
+│   │   └── parsers/fortigate.py
+│   ├── dedup/
+│   │   ├── schemas.py
+│   │   ├── deduplicator.py
+│   │   └── pipeline.py
 │   ├── enrichment/
-│   │   ├── cache.py                   
-│   │   ├── ip_utils.py                
-│   │   ├── schemas.py                 
-│   │   ├── pipeline.py                
+│   │   ├── schemas.py
+│   │   ├── cache.py
+│   │   ├── ip_utils.py
+│   │   ├── pipeline.py
 │   │   ├── providers/
-│   │   │   ├── abuseipdb.py           
-│   │   │   └── virustotal.py          
+│   │   │   ├── abuseipdb.py
+│   │   │   └── virustotal.py
 │   │   └── normalizers/
-│   │       └── virustotal_normalizer.py 
-│   └── normalized/
+│   │       └── virustotal_normalizer.py
+│   ├── aggregation/
+│   │   ├── schemas.py
+│   │   ├── aggregator.py
+│   │   └── pipeline.py
+│   ├── ai/
+│   │   ├── schemas.py
+│   │   ├── analyzer.py
+│   │   ├── context_loader.py
+│   │   ├── pipeline.py
+│   │   └── context/
+│   │       ├── 01_environment.md
+│   │       ├── 02_detection_policy.md
+│   │       ├── 03_asset_criticality.md
+│   │       ├── 04_known_benign_patterns.md
+│   │       ├── 05_response_playbooks.md
+│   │       └── 06_output_schema.md
+│   ├── alert/
+│   │   ├── schemas.py
+│   │   ├── detector.py
+│   │   └── pipeline.py
+│   └── telegram/
 │       ├── schemas.py
-│       ├── normalizer.py
-│       ├── pipeline.py
-│       └── parsers/fortigate.py
+│       ├── sender.py
+│       └── pipeline.py
+├── .cache/
 ├── .env / .env.example
 ├── requirements.txt
 └── README.md
 ```
 
-## 4. Setup
+---
+
+## 3. Setup
 
 ```bash
-cd soc_ai_enrichment
 python -m venv .venv
-```
-
-Linux/macOS:
-```bash
-source .venv/bin/activate
 ```
 
 Windows PowerShell:
@@ -112,95 +116,137 @@ pip install -r requirements.txt
 Configure environment variables:
 ```bash
 cp .env.example .env
-# Edit .env and add your AbuseIPDB API key
+# Edit .env with your API keys and Telegram credentials
 ```
 
-## 5. Run Local Demo
+---
+
+## 4. Configuration
+
+All configuration is managed in `.env`:
+
+### Threat Intelligence
+| Variable | Description |
+|----------|-------------|
+| `ABUSEIPDB_API_KEY` | AbuseIPDB API key (required for enrichment) |
+
+### LLM Provider
+| Variable | Description |
+|----------|-------------|
+| `LLM_PROVIDER` | Provider: `groq`, `deepseek`, `openrouter`, `together`, `openai`, `custom` |
+| `<PROVIDER>_API_KEY` | API key for the selected provider |
+| `<PROVIDER>_MODEL` | Model name (optional, uses default if unset) |
+| `LLM_TEMPERATURE` | Sampling temperature (default: 0.2) |
+| `LLM_MAX_TOKENS` | Max completion tokens (default: 1024) |
+
+### Telegram Notification
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather (required) |
+| `TELEGRAM_CHAT_ID` | Target chat ID (required) |
+| `TELEGRAM_DRY_RUN` | Set `true` to print messages without sending (default: `true`) |
+| `TELEGRAM_SEND_DELAY` | Delay between messages in seconds (default: 0.5) |
+
+### How to create a Telegram bot
+
+1. Open Telegram, search **@BotFather** → send `/newbot`
+2. Choose a display name and username (must end in `bot`)
+3. Copy the bot token → set `TELEGRAM_BOT_TOKEN`
+4. Open your bot → click **Start**
+5. Get your chat ID via: `https://api.telegram.org/bot<TOKEN>/getUpdates`
+6. Set `TELEGRAM_CHAT_ID` and `TELEGRAM_DRY_RUN=false`
+
+---
+
+## 5. Run
+
+### End-to-end (all 7 stages)
 
 From the project root:
 
-```bash
-cd soc-ai
-
-# Step 1: Normalize
-python -m soc_ai.normalized.pipeline raw_logs/03_fortigate_firewall.txt output/normalized_fortigate.jsonl
-
-# Step 2: Deduplicate
-python -m soc_ai.dedup.pipeline output/normalized_fortigate.jsonl output/deduplicated_fortigate.jsonl
-
-# Step 3: Enrich
-python -m soc_ai.enrichment.pipeline output/deduplicated_fortigate.jsonl output/enriched_fortigate.jsonl
-
-# 4. Aggregate 
-python -m soc_ai.aggregation.pipeline output/enriched_fortigate.jsonl output/aggregated_fortigate.jsonl
-
-# 5. Analysis
-python -m soc_ai.ai.pipeline output/aggregated_fortigate.jsonl output/analyzed_fortigate.jsonl
+```powershell
+python -m soc_ai.normalized.pipeline  raw_logs/03_fortigate_firewall.txt  output/normalized_fortigate.jsonl
+python -m soc_ai.dedup.pipeline       output/normalized_fortigate.jsonl   output/deduplicated_fortigate.jsonl
+python -m soc_ai.enrichment.pipeline  output/deduplicated_fortigate.jsonl output/enriched_fortigate.jsonl
+python -m soc_ai.aggregation.pipeline output/enriched_fortigate.jsonl     output/aggregated_fortigate.jsonl
+python -m soc_ai.ai.pipeline          output/aggregated_fortigate.jsonl   output/analyzed_fortigate.jsonl
+python -m soc_ai.alert.pipeline       output/analyzed_fortigate.jsonl     output/alerts_fortigate.jsonl
+python -m soc_ai.telegram.pipeline    output/alerts_fortigate.jsonl
 ```
 
-## 6. Output Schema
+### Alert Detection options
 
-### 6.1 EnrichmentResult Fields (Raw Provider Output)
+```powershell
+# Default: 1-hour heartbeat interval
+python -m soc_ai.alert.pipeline output/analyzed_fortigate.jsonl output/alerts_fortigate.jsonl
 
-Each enrichment object contains:
+# Custom heartbeat interval (e.g. 0.5 hours)
+python -m soc_ai.alert.pipeline output/analyzed_fortigate.jsonl output/alerts_fortigate.jsonl --heartbeat-interval 0.5
+```
 
-| Field              | Description                                                          |
-| ------------------ | -------------------------------------------------------------------- |
-| `indicator_value`  | The IOC value, currently an IP address.                              |
-| `indicator_type`   | IOC type, currently `ip`.                                            |
-| `matched_source`   | Threat intelligence source, currently `AbuseIPDB`.                   |
-| `confidence_score` | AbuseIPDB abuse confidence score.                                    |
-| `severity`         | Internal severity mapping.                                           |
-| `category`         | Internal category mapping.                                           |
-| `tags`             | Additional context tags.                                             |
-| `reputation`       | `benign`, `suspicious`, `malicious`, `not_applicable`, or `unknown`. |
-| `reason`           | Human-readable classification reason.                                |
-| `first_seen`       | First seen timestamp, if available.                                  |
-| `last_seen`        | Last reported timestamp, if available.                               |
-| `expiry_status`    | `active` or `not_applicable`.                                        |
-| `raw`              | Raw or partial provider response for debugging.                      |
+### Telegram options
 
-### 6.2 Normalized Output (After Deduplicate Logs Stage)
+```powershell
+# Dry-run (print only, no real sending)
+python -m soc_ai.telegram.pipeline output/alerts_fortigate.jsonl --dry-run
 
-After passing through the `AbuseIPDBEnrichmentNormalizer`, the `raw` field is transformed into a compact structure:
+# Real send (TELEGRAM_DRY_RUN must also be false in .env)
+python -m soc_ai.telegram.pipeline output/alerts_fortigate.jsonl
+```
 
-| Field                  | Description                                                  |
-| ---------------------- | ------------------------------------------------------------ |
-| `summary.total_reports` | Total number of reports from AbuseIPDB.                     |
-| `summary.distinct_reporters` | Number of distinct users who reported the IP.          |
-| `summary.country_code` | Country code of the IP.                                      |
-| `summary.usage_type`   | Usage type (e.g., Data Center, ISP).                         |
-| `summary.isp`          | Internet Service Provider name.                              |
-| `summary.domain`       | Domain associated with the IP.                               |
-| `summary.is_tor`       | Whether the IP is a known Tor exit node.                     |
-| `summary.is_whitelisted` | Whether the IP is whitelisted on AbuseIPDB.                |
-| `summary.top_categories` | Top attack categories (most frequent first).               |
-| `summary.sample_report_comments` | Up to 3 unique report comments (deduplicated).     |
-| `raw_ref.provider`     | Provider name (e.g., `AbuseIPDB`).                           |
-| `raw_ref.raw_stored`   | Always `false` (raw data not stored to save space).          |
-| `raw_ref.normalized_version` | Version of the normalization schema.                   |
+---
 
-## 7. Severity Mapping
+## 6. Alert & Heartbeat Format
+
+### Alert Message (Telegram)
 
 ```text
-abuseConfidenceScore >= 90  -> critical
-abuseConfidenceScore >= 70  -> high
-abuseConfidenceScore >= 30  -> medium
-abuseConfidenceScore > 0    -> low
-otherwise                   -> none
+🟡 [MEDIUM] TCP Port Scan Detected
+
+Summary: A TCP port scan was detected from 10.2.11.24 to 17.57.154.7 on port 993...
+
+Category: reconnaissance
+Confidence: 70%
+Window: 2026-06-15T07:55:00+08:00 -> 2026-06-15T08:00:00+08:00
+Events: 1 | Malicious IPs: 0
+Source: fortigate
+
+Recommended Actions:
+  1. Monitor the source IP 10.2.11.24...
 ```
 
-## 8. Reputation Mapping
+### Heartbeat Message (Telegram)
 
 ```text
-abuseConfidenceScore >= 70              -> malicious
-abuseConfidenceScore > 0 or reports > 0 -> suspicious
-otherwise                               -> benign
+💓 SOC-AI Heartbeat
+
+🛡️ No alerts in the last 1.0 hour(s)
+
+Windows processed: 12
+Events processed: 48
+Last alert at: 2026-06-15T08:00:00+08:00
 ```
 
-## 9. How to get API Key?
+---
 
-Create an account:
-https://www.abuseipdb.com/register
+## 7. Severity & Reputation Mapping
+
+### Severity (from AbuseIPDB confidence score)
+
+```text
+confidence_score >= 90  -> critical
+confidence_score >= 70  -> high
+confidence_score >= 30  -> medium
+confidence_score > 0    -> low
+otherwise               -> none
+```
+
+### Reputation
+
+```text
+confidence_score >= 70              -> malicious
+confidence_score > 0 or reports > 0 -> suspicious
+otherwise                           -> benign
+```
 
 ---
