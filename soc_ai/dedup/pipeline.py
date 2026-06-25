@@ -5,17 +5,6 @@ Flow:
 
     NormalizedLog JSONL  ->  LogDeduplicator  ->  DeduplicatedLog JSONL
 
-Pipeline position (per the original evvolabs architecture):
-
-    Raw Logs
-      -> Normalize Logs
-      -> Deduplicate Logs          
-      -> Data Enrichment
-      -> Log Aggregation
-      -> AI Log Analysis
-      -> Alert Detection
-      -> Send Alert to Telegram
-
 Putting dedup BEFORE enrichment reduces the number of paid API calls
 (AbuseIPDB, VirusTotal) by collapsing duplicate log entries before
 they reach the enrichment layer.
@@ -52,19 +41,6 @@ def read_normalized_jsonl(input_file: str) -> List[NormalizedLog]:
     rather than being dropped silently. This mirrors the behaviour of
     ``soc_ai.enrichment.pipeline.read_normalized_jsonl`` so that the
     dedup pipeline is forgiving on slightly-dirty input.
-
-    Parameters
-    ----------
-    input_file : str
-        Path to the normalized JSONL file (typically the output of
-        ``soc_ai.normalized.pipeline``).
-
-    Returns
-    -------
-    list[NormalizedLog]
-        Parsed normalized log entries. Lines that failed to parse are
-        returned as ``NormalizedLog`` instances with
-        ``parse_status="failed"``.
     """
     logs: List[NormalizedLog] = []
 
@@ -107,14 +83,6 @@ def write_deduplicated_jsonl(
     Each line is the JSON serialisation of ``DeduplicatedLog.to_dict()``,
     which includes all inherited ``NormalizedLog`` fields plus the two
     dedup metadata fields (``dedup_key`` and ``dedup_count``).
-
-    Parameters
-    ----------
-    output_file : str
-        Path for the output JSONL file. Parent directories are created
-        automatically.
-    deduped_logs : list[DeduplicatedLog]
-        Deduplicated log entries to write.
     """
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,19 +100,6 @@ def dedup_pipeline(
 ) -> List[DeduplicatedLog]:
     """
     Full deduplication pipeline: read normalized JSONL -> dedup -> write JSONL.
-
-    Parameters
-    ----------
-    input_file : str
-        Path to the normalized JSONL file (output of the normalize
-        pipeline).
-    output_file : str
-        Path for the deduplicated JSONL output.
-
-    Returns
-    -------
-    list[DeduplicatedLog]
-        The deduplicated representative entries, in first-seen order.
     """
     normalized_logs = read_normalized_jsonl(input_file)
     print(f"[+] Read {len(normalized_logs)} normalized logs from: {input_file}")

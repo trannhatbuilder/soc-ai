@@ -68,13 +68,14 @@ DEDUP_KEY_FIELDS: List[str] = [
     "sessionid",   # sourced from detail["sessionid"]
 ]
 
-# Subset of DEDUP_KEY_FIELDS that act as \"network discriminators\". When
-# at least one of these is non-empty, the C2 semantic key alone is
-# sufficient to tell two logs apart. When ALL of them are empty (e.g.
-# non-network events such as FortiGate security-rating reports), the
-# dedup key falls back to also hashing the full `detail` dict so that
-# two events at the same second with different `detail` content are not
-# collapsed (see P3 fallback in `compute_dedup_key`).
+'''Subset of DEDUP_KEY_FIELDS that act as \"network discriminators\". When
+ at least one of these is non-empty, the C2 semantic key alone is
+ sufficient to tell two logs apart. When ALL of them are empty (e.g.
+ non-network events such as FortiGate security-rating reports), the
+ dedup key falls back to also hashing the full `detail` dict so that
+ two events at the same second with different `detail` content are not
+ collapsed (see P3 fallback in `compute_dedup_key`).'''
+
 NETWORK_DISCRIMINATOR_FIELDS: List[str] = [
     "src_ip",
     "dst_ip",
@@ -104,16 +105,6 @@ def compute_dedup_key(log: NormalizedLog) -> str:
     reports), the base key would otherwise collapse unrelated events
     that share the same second. To prevent this, the dedup key is
     augmented with a stable SHA-256 hash of the full ``detail`` dict.
-
-    Parameters
-    ----------
-    log : NormalizedLog
-        The normalized log entry to compute a key for.
-
-    Returns
-    -------
-    str
-        64-character lowercase hex SHA-256 digest.
     """
     session_id = ""
     if log.detail and isinstance(log.detail, dict):
@@ -141,10 +132,10 @@ def compute_dedup_key(log: NormalizedLog) -> str:
         session_id,
     ]
 
-    # P3 fallback: when no network-discriminator field is set, augment
-    # the key with a stable hash of the full `detail` dict so that two
-    # non-network events at the same second with different content are
-    # not collapsed into one.
+    ''' P3 fallback: when no network-discriminator field is set, augment
+     the key with a stable hash of the full `detail` dict so that two
+     non-network events at the same second with different content are
+     not collapsed into one.'''
     network_discriminators = (
         src_ip_str,
         dst_ip_str,

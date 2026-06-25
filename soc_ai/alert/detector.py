@@ -5,8 +5,21 @@ Telegram notification stage.  It reads :class:`AnalyzedLog` entries
 (the output of ``soc_ai.ai.pipeline``) and decides what kind of
 notification event to emit:
 
-  - **AlertEvent**  — when ``verdict.should_alert == True``.
+  - **AlertEvent**  — when ``verdict.should_alert == True`` **and**
+    the alert's ``dedup_key`` has not been seen before.
   - **HeartbeatEvent** — when **1 hour** has elapsed with no alerts.
+
+Alert deduplication
+-------------------
+Each :class:`AIVerdict` carries a ``dedup_key`` (e.g.
+``"udp_flood:10.6.14.106:129.126.167.174:56184"``).  The detector
+persists the set of previously-sent ``dedup_key`` values in the state
+file.  When a new alert has a ``dedup_key`` that was already sent,
+the alert is **skipped** — it will not produce an :class:`AlertEvent`
+and will not be forwarded to Telegram.
+
+This prevents duplicate Telegram notifications when the pipeline is
+re-run on the same input data.
 
 Heartbeat logic
 ---------------
@@ -18,10 +31,35 @@ silence.
 
 State persistence
 -----------------
-The ``last_notification_at`` timestamp is persisted to a JSON file
-(``.cache/alert_state.json`` by default) so the timer survives across
-pipeline runs.  On the very first run (no state file), the timer
-starts from the current time — no heartbeat is sent immediately.
+The following fields are persisted to a JSON file
+(``.cache/alert_state.json`` by default) so state survives across
+pipeline runs:
+
+  - ``last_notification_at`` — timestamp of last alert or heartbeat.
+  - ``sent_alert_keys`` — set of ``dedup_key`` values already sent.
+  - ``windows_since_last`` / ``events_since_last`` — silence counters.
+
+On the very first run (no state file), the timer starts from the
+current time — no heartbeat is sent immediately.
+
+Usage
+-----
+    >>> from soc_ai.alert.detector import AlertDetector
+    >>> detector = AlertDetector()
+    >>> events = detector.detect_batch(analyzed_logs)
+    >>> for event in events:
+    ...     print(event.to_dict())
+
+Pipeline position:
+
+    Raw Logs
+      -> Normalize
+      -> Deduplicate
+      -> Enrich
+      -> Aggregate
+      -> AI Analysis
+      -> Alert Detection          <-- this module
+      -> Send Telegram
 """
 
 import json
@@ -86,6 +124,12 @@ class AlertDetector:
         # the same batch).
         self._heartbeat_sent_this_period: bool = False
 
+        # ── Alert deduplication ────────────────────────────────────────
+        # Set of dedup_key values that have already produced an AlertEvent.
+        # Persisted in the state file so duplicate alerts are not sent to
+        # Telegram when the pipeline is re-run on the same input data.
+        self._sent_alert_keys: set = set()
+
         # ── Load persisted state ───────────────────────────────────────
         self._load_state()
 
@@ -115,19 +159,28 @@ class AlertDetector:
 
         # ── Check for alert ───────────────────────────────────────────
         if analyzed.verdict.should_alert:
-            alert = AlertEvent.from_analyzed_log(
-                aggregated=analyzed.aggregated,
-                verdict=analyzed.verdict,
-                detected_at=now,
-            )
-            events.append(alert)
+            dedup_key = analyzed.verdict.dedup_key or ""
 
-            # Reset silence tracking
-            self._last_notification_at = now
-            self._windows_since_last = 0
-            self._events_since_last = 0
-            self._heartbeat_sent_this_period = False
-            self._save_state()
+            if dedup_key in self._sent_alert_keys:
+                # Already sent this alert — skip to prevent duplicates
+                pass
+            else:
+                alert = AlertEvent.from_analyzed_log(
+                    aggregated=analyzed.aggregated,
+                    verdict=analyzed.verdict,
+                    detected_at=now,
+                )
+                events.append(alert)
+
+                # Record dedup_key so this alert is never duplicated
+                self._sent_alert_keys.add(dedup_key)
+
+                # Reset silence tracking
+                self._last_notification_at = now
+                self._windows_since_last = 0
+                self._events_since_last = 0
+                self._heartbeat_sent_this_period = False
+                self._save_state()
         else:
             # Not alert-worthy — accumulate silence counters
             self._windows_since_last += 1
@@ -179,6 +232,7 @@ class AlertDetector:
         self._windows_since_last = 0
         self._events_since_last = 0
         self._heartbeat_sent_this_period = False
+        self._sent_alert_keys = set()
 
         if self.state_file.exists():
             self.state_file.unlink()
@@ -199,6 +253,11 @@ class AlertDetector:
     def events_since_last_notification(self) -> int:
         """Number of raw events since last notification."""
         return self._events_since_last
+
+    @property
+    def sent_alert_keys(self) -> set:
+        """Set of dedup_key values already sent (read-only view)."""
+        return set(self._sent_alert_keys)
 
     # ── Internal helpers ──────────────────────────────────────────────
 
@@ -250,6 +309,8 @@ class AlertDetector:
             self._last_notification_at = data.get("last_notification_at")
             self._windows_since_last = data.get("windows_since_last", 0)
             self._events_since_last = data.get("events_since_last", 0)
+            # Load sent_alert_keys (list in JSON → set in memory)
+            self._sent_alert_keys = set(data.get("sent_alert_keys", []))
         except (json.JSONDecodeError, OSError):
             # Corrupt or unreadable — start fresh
             self._last_notification_at = None
@@ -266,6 +327,7 @@ class AlertDetector:
             "last_notification_at": self._last_notification_at,
             "windows_since_last": self._windows_since_last,
             "events_since_last": self._events_since_last,
+            "sent_alert_keys": sorted(self._sent_alert_keys),
         }
 
         self.state_file.write_text(

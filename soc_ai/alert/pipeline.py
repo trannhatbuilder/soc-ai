@@ -200,6 +200,7 @@ def alert_pipeline(
     input_file: str,
     output_file: str,
     heartbeat_interval_hours: float = 1.0,
+    reset_state: bool = False,
 ) -> List[Union[AlertEvent, HeartbeatEvent]]:
     """
     Full alert detection pipeline: read analyzed JSONL -> detect
@@ -215,6 +216,10 @@ def alert_pipeline(
     heartbeat_interval_hours : float, optional
         Number of hours of silence before a heartbeat is sent.
         Defaults to 1.0.
+    reset_state : bool, optional
+        When ``True``, clear all persisted state before running.
+        This causes previously-sent alerts (identified by dedup_key)
+        to be treated as new again.  Defaults to ``False``.
 
     Returns
     -------
@@ -225,6 +230,16 @@ def alert_pipeline(
     print(f"[+] Read {len(analyzed_logs)} analyzed windows from: {input_file}")
 
     detector = AlertDetector(heartbeat_interval_hours=heartbeat_interval_hours)
+
+    if reset_state:
+        detector.reset_state()
+        print("[+] State reset — all previous dedup_keys and timers cleared")
+
+    # Show dedup info
+    existing_keys = detector.sent_alert_keys
+    if existing_keys:
+        print(f"[+] {len(existing_keys)} previously-sent alert key(s) loaded from state")
+
     events = detector.detect_batch(analyzed_logs)
 
     # Summary
@@ -282,6 +297,12 @@ def main() -> None:
         default=1.0,
         help="Hours of silence before heartbeat (default: 1.0)",
     )
+    parser.add_argument(
+        "--reset-state",
+        action="store_true",
+        default=False,
+        help="Clear all persisted state (dedup_keys, timers) before running",
+    )
 
     args = parser.parse_args()
 
@@ -289,6 +310,7 @@ def main() -> None:
         input_file=args.input_file,
         output_file=args.output_file,
         heartbeat_interval_hours=args.heartbeat_interval,
+        reset_state=args.reset_state,
     )
 
 

@@ -62,18 +62,6 @@ class DeduplicatedLog(NormalizedLog):
         is initialised to ``1`` (the caller — typically the
         ``LogDeduplicator`` — is responsible for incrementing it when
         duplicates are merged into this representative entry).
-
-        Parameters
-        ----------
-        normalized : NormalizedLog
-            The source normalized log entry.
-        dedup_key : str
-            Pre-computed SHA-256 dedup key for this entry.
-
-        Returns
-        -------
-        DeduplicatedLog
-            A new deduplicated entry initialised with ``dedup_count=1``.
         """
         return cls(
             event_id=normalized.event_id,
