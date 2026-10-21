@@ -56,6 +56,17 @@ a :class:`AIVerdict.fallback` for that window — the pipeline
 continues with the next window and never aborts mid-run. The number
 of fallback verdicts is reported in the summary.
 
+Verdict caching
+---------------
+Verdicts are cached per ``(model, window content)`` in
+``ai_verdict_cache.json`` next to the output file. When the same
+window (byte-identical content) is seen again — e.g. a static demo
+log re-read every 3-minute cycle — the cached verdict is reused and
+**no LLM call is made**, saving tokens/credits and keeping results
+stable across runs (no severity flapping → no duplicate alerts).
+Fallback verdicts are never cached, so failed windows are retried
+on the next cycle.
+
 Usage (CLI):
     python -m soc_ai.ai.pipeline <input_jsonl> <output_jsonl>
 
@@ -69,9 +80,10 @@ Usage (API):
 """
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -205,6 +217,66 @@ def write_analyzed_jsonl(
             fh.write(json.dumps(log.to_dict(), ensure_ascii=False) + "\n")
 
 
+# ── Verdict cache ───────────────────────────────────────────────────────
+
+CACHE_VERSION = "v1"
+
+
+def _verdict_cache_key(window: AggregatedLog, model: str) -> str:
+    """
+    Build a stable cache key for one aggregated window.
+
+    The key is ``<model>:<sha256>`` where the digest is computed over
+    the window's canonical JSON (sorted keys). Two runs over identical
+    log data produce the same key; any change inside the window (a new
+    log, a different enrichment value) produces a different key, so
+    genuinely-new data is always re-analyzed.
+    """
+    canonical = json.dumps(window.to_dict(), sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"{model}:{digest}"
+
+
+def _verdict_cache_path(output_file: str) -> Path:
+    """The cache lives next to the analyzed output file."""
+    return Path(output_file).parent / "ai_verdict_cache.json"
+
+
+def _load_verdict_cache(path: Path) -> Dict[str, Any]:
+    """
+    Load the verdict cache from disk.
+
+    Returns an empty dict on any problem (missing file, corrupt JSON,
+    version mismatch) so a broken cache never crashes the pipeline —
+    it just forces fresh LLM calls.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and data.get("version") == CACHE_VERSION:
+            verdicts = data.get("verdicts")
+            if isinstance(verdicts, dict):
+                return verdicts
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _save_verdict_cache(path: Path, verdicts: Dict[str, Any]) -> None:
+    """
+    Persist the verdict cache atomically (tmp file + rename).
+
+    Called after every fresh LLM verdict, so a Ctrl+C mid-cycle never
+    loses the verdicts already paid for.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": CACHE_VERSION, "verdicts": verdicts}
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=1)
+    tmp.replace(path)
+
+
 # ── Pipeline entry point ────────────────────────────────────────────────
 
 def analyze_pipeline(
@@ -254,19 +326,52 @@ def analyze_pipeline(
     # Analyze each window sequentially.
     # A failure on one window produces a fallback verdict — the loop
     # never aborts.
+    #
+    # Each window is looked up in the verdict cache first (key: model
+    # + content hash). A cache hit reuses the stored verdict and skips
+    # the LLM call entirely — a static log re-read every cycle costs
+    # 0 tokens after the first successful pass.
+    cache_path = _verdict_cache_path(output_file)
+    cache = _load_verdict_cache(cache_path)
     analyzed_logs: List[AnalyzedLog] = []
     alert_count = 0
     fallback_count = 0
-    total_tokens = 0
+    cached_hits = 0
+    total_tokens = 0      # tokens actually spent on LLM calls this cycle
+    saved_tokens = 0      # tokens NOT spent thanks to cached verdicts
 
     for i, window in enumerate(aggregated_windows, start=1):
-        print(
-            f"[~] Analyzing window {i}/{len(aggregated_windows)}: "
+        window_label = (
+            f"window {i}/{len(aggregated_windows)}: "
             f"{window.window_start} -> {window.window_end} "
             f"({window.unique_log_count} logs, {window.event_count} events)"
         )
+        cache_key = _verdict_cache_key(window, analyzer.model)
 
-        verdict = analyzer.analyze(window)
+        # 1. Try the verdict cache first.
+        verdict: Optional[AIVerdict] = None
+        was_cached = False
+        cached_dict = cache.get(cache_key)
+        if cached_dict is not None:
+            try:
+                verdict = AIVerdict(**cached_dict)
+                cached_hits += 1
+                was_cached = True
+                print(f"[~] {window_label}")
+                print("    [cache] verdict reused — no LLM call")
+            except TypeError:
+                verdict = None  # stale/incompatible entry → re-analyze
+
+        # 2. Cache miss → call the LLM.
+        if verdict is None:
+            print(f"[~] Analyzing {window_label}")
+            verdict = analyzer.analyze(window)
+            # Never cache fallback verdicts so failed windows are
+            # retried on the next cycle.
+            if verdict.category != "analysis_failed":
+                cache[cache_key] = verdict.to_dict()
+                _save_verdict_cache(cache_path, cache)
+
         analyzed_logs.append(AnalyzedLog(aggregated=window, verdict=verdict))
 
         # Track stats
@@ -275,7 +380,10 @@ def analyze_pipeline(
         if verdict.category == "analysis_failed":
             fallback_count += 1
         if verdict.tokens_used is not None:
-            total_tokens += verdict.tokens_used
+            if was_cached:
+                saved_tokens += verdict.tokens_used
+            else:
+                total_tokens += verdict.tokens_used
 
         # Print per-window verdict summary
         verdict_marker = "ALERT" if verdict.should_alert else "ok   "
@@ -285,18 +393,22 @@ def analyze_pipeline(
             f"confidence={verdict.confidence:3d}  "
             f"category={verdict.category}{fallback_marker}"
         )
-        if verdict.tokens_used is not None:
+        if not was_cached and verdict.tokens_used is not None:
             print(f"    tokens={verdict.tokens_used}")
 
     # Summary
     print()
-    print(
+    summary = (
         f"[+] Analysis summary: "
         f"windows={len(analyzed_logs)}, "
         f"alerts={alert_count}, "
         f"fallbacks={fallback_count}, "
+        f"cached={cached_hits}, "
         f"total_tokens={total_tokens}"
     )
+    if saved_tokens:
+        summary += f", tokens_saved={saved_tokens}"
+    print(summary)
 
     write_analyzed_jsonl(output_file, analyzed_logs)
     print(f"[+] Output saved to: {output_file}")

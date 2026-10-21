@@ -15,9 +15,11 @@ from dotenv import load_dotenv
 load_dotenv()  # Ensure API keys are set before soc_ai is imported
 
 import os
+import signal
 import sys
 import time
 import logging
+import threading
 from datetime import datetime
 
 # Ensure Python can import modules from the project root
@@ -116,28 +118,57 @@ def run_pipeline_cycle():
     except Exception as e:
         logging.error(f"!!! CRITICAL ERROR IN CYCLE: {e}", exc_info=True)
 
+def _raise_sigint(signum, frame):
+    """Translate SIGINT into KeyboardInterrupt.
+
+    Installed explicitly so Ctrl+C always works, even when the process
+    was started with SIGINT ignored (e.g. a background job spawned from
+    a non-interactive POSIX shell inherits SIG_IGN).
+    """
+    raise KeyboardInterrupt
+
+
 def main():
     """Main loop of the system."""
+    signal.signal(signal.SIGINT, _raise_sigint)
+
     logging.info("Starting SOC-AI Orchestrator...")
     logging.info(f"The pipeline runs continuously every {INTERVAL_SECONDS//60} minutes.")
     logging.info("Note: make sure the .env file has valid API keys and Telegram bot settings.")
-    
+    logging.info("Press Ctrl+C to stop.")
+
     # Create the output directory if it does not exist
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    # Infinite loop to run periodically
+
+    # Each cycle runs in a daemon worker thread so the MAIN thread stays
+    # responsive to Ctrl+C at all times. On Windows, Ctrl+C cannot interrupt
+    # a blocking HTTP request; with this design the main thread is always
+    # parked in a short join() loop and reacts within ~0.5 seconds.
     while True:
         cycle_start = time.time()
-        
-        run_pipeline_cycle()
-        
+
+        worker = threading.Thread(target=run_pipeline_cycle, daemon=True)
+        worker.start()
+        try:
+            while worker.is_alive():
+                worker.join(timeout=0.5)
+        except KeyboardInterrupt:
+            logging.info("Ctrl+C detected — SOC-AI Orchestrator stopped.")
+            logging.shutdown()
+            os._exit(0)  # exit immediately; do NOT wait for the in-flight request
+
         cycle_duration = time.time() - cycle_start
-        
+
         # Compute the remaining sleep time so the cycle length stays exact
         sleep_time = max(0, INTERVAL_SECONDS - cycle_duration)
         if sleep_time > 0:
-            logging.info(f"Waiting {sleep_time:.0f} seconds before the next cycle...\n")
-            time.sleep(sleep_time)
+            try:
+                logging.info(f"Waiting {sleep_time:.0f} seconds before the next cycle...\n")
+                time.sleep(sleep_time)
+            except KeyboardInterrupt:
+                logging.info("Ctrl+C detected — SOC-AI Orchestrator stopped.")
+                logging.shutdown()
+                break
 
 if __name__ == "__main__":
     main()

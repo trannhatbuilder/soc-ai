@@ -1,0 +1,185 @@
+{
+ "version": "v1",
+ "verdicts": {
+  "deepseek-v4-pro:317a4ba3861811aa7be1a72bc1ee199fadfc46cb938449722094a1c42b9aa09f": {
+   "should_alert": false,
+   "severity": "low",
+   "confidence": 95,
+   "category": "internet_scan_noise",
+   "title": "No actionable activity; normal business traffic and low-volume WAN probes",
+   "summary": "The window contains routine FortiGate system/user events, authorized VPN negotiations, normal internal Microsoft 365 and DNS traffic, and a few low-volume inbound WAN denies. No malicious IP enrichment, IPS anomaly, authentication abuse, or scan threshold is present.",
+   "reasoning": "Traffic and UTM telemetry are both present, so there is no telemetry gap. VPN negotiate events are from authorized sources 219.92.154.9 and 121.200.246.70. Internal LAN flows to Microsoft 365 endpoints and external DNS match known benign patterns. The traffic/local denies from 20.201.215.0 and 61.183.69.254 are low-volume, single-source probes against the FortiGate WAN IP and do not meet the 10+ distinct-port reconnaissance threshold. UTM app-ctrl, DNS, and webfilter events involve normal business applications or legitimate services, with no malicious IPs flagged and no high-confidence IPS detections.",
+   "recommended_actions": [
+    "No immediate action required.",
+    "Continue routine monitoring of FortiGate WAN deny activity.",
+    "Track whether 20.201.215.0 or other sources repeat across future windows before considering blocking."
+   ],
+   "dedup_key": "internet_scan_noise:20.201.215.0:128.106.89.53",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:40:27.587859+00:00",
+   "tokens_used": 13589
+  },
+  "deepseek-v4-pro:3fe5ede86e5df043fb05a1d22d50c6cef2c10952093d26aba25f704b066a2044": {
+   "should_alert": true,
+   "severity": "medium",
+   "confidence": 95,
+   "category": "telemetry_gap",
+   "title": "FortiGate traffic logs absent for full 5-minute window",
+   "summary": "The window contains only two UTM DNS logs and no FortiGate traffic logs from 00:06 to 00:09. This represents a required telemetry gap for the reporting interval.",
+   "reasoning": "The two observed DNS queries are normal internal endpoint activity and are not malicious: 10.6.11.232 queried 8.8.8.8 and authorized external DNS 208.91.112.53. However, FortiGate traffic telemetry is expected continuously and is completely absent for this full interval, which is an operational monitoring blind spot regardless of the benign UTM events.",
+   "recommended_actions": [
+    "Verify FortiGate traffic log generation and syslog forwarding configuration.",
+    "Check collector, agent, file rotation, and forwarding pipeline health for traffic logs.",
+    "Escalate as a telemetry outage if traffic logs remain absent in the next interval."
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:40:38.022910+00:00",
+   "tokens_used": 8251
+  },
+  "deepseek-v4-pro:1d4f10a4735cdd2657099f276b4c8b54ee2901070c6ed96c309f49364c0aaaeb": {
+   "should_alert": true,
+   "severity": "low",
+   "confidence": 70,
+   "category": "telemetry_gap",
+   "title": "No traffic or UTM telemetry for full 5-minute interval (only security-rating events)",
+   "summary": "The 02:42-02:45 window contains only 3 FortiGate event/security-rating records and zero traffic or utm logs. Both required telemetry types are absent for the entire reporting interval, indicating a visibility gap rather than an attack.",
+   "reasoning": "All three records are event/security-rating entries, which are scheduled compliance scans and benign by policy; they carry no src/dst/port/action data and contain no malicious indicators (malicious_ip_count=0). However, the environment expects continuous traffic and utm telemetry, and neither log type appears anywhere in this full 5-minute interval. Per detection policy, absence of traffic or utm logs for a full reporting interval is an operational alert (telemetry_gap) and must not be suppressed as a normal no-activity condition. Severity is kept low because this is the first observed interval and event logs are still arriving, so the pipeline is partially healthy; there is no evidence of attack, so no blocking or isolation is warranted.",
+   "recommended_actions": [
+    "Verify FortiGate syslog delivery for traffic and utm log types to the collector (syslog target config, filters, and forwarding)",
+    "Check collector/agent process health, log file creation and rotation, and disk space on the relay 10.6.66.3",
+    "Confirm whether the gap is limited to this window or persists into the next interval; escalate to telemetry outage if it continues",
+    "Continue monitoring event logs to confirm the pipeline is only partially degraded"
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic+utm:2026-06-15T02:42",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:40:44.920014+00:00",
+   "tokens_used": 8402
+  },
+  "deepseek-v4-pro:6f193e6e1bbbeae9c4d87ccbeafcad121410662343ee50e7ec1a3463f50e66f7": {
+   "should_alert": false,
+   "severity": "low",
+   "confidence": 95,
+   "category": "expected_application_traffic",
+   "title": "Single informational SSL/QUIC log to external CDN IP",
+   "summary": "One FortiGate utm/ssl informational event from internal host 10.6.14.45 to 151.101.3.6 on 443/UDP. The destination is not flagged malicious by enrichment.",
+   "reasoning": "The window contains only a single informational SSL event with no block, anomaly, or repetition. The destination has confidence_score 0 and is_malicious=false, so there is no malicious IP evidence. This matches normal outbound HTTPS/QUIC-style application traffic and is below alert threshold.",
+   "recommended_actions": [
+    "No immediate action required.",
+    "Continue monitoring for repetition, anomalous volume, or malicious enrichment on the destination."
+   ],
+   "dedup_key": "expected_application_traffic:10.6.14.45:151.101.3.6:443",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:40:53.684454+00:00",
+   "tokens_used": 7767
+  },
+  "deepseek-v4-pro:c4331097b13da426f3076fa9b8aa4cf900a27eb17216b220e02c64d9f86b1b90": {
+   "should_alert": true,
+   "severity": "medium",
+   "confidence": 88,
+   "category": "telemetry_gap",
+   "title": "FortiGate traffic logs absent for full 5-minute window",
+   "summary": "The 05:48–05:51 batch contains a single utm/anomaly event and zero traffic logs, despite traffic telemetry being a required continuous input. This indicates a monitoring blind spot on the traffic log pipeline.",
+   "reasoning": "The sole event is a single utm/anomaly (UDP 10.6.14.106 to 129.126.167.174:56184, action clear_session) with no crscore, no repetition, and a benign destination reputation; it does not meet the IPS-anomaly threshold (crscore >= 70 with action=pass) and is consistent with a low-signal or blocked event. However, FortiGate traffic logs are completely absent for the full reporting interval, which policy defines as a required telemetry-health failure. Missing traffic telemetry cannot be suppressed as a normal no-activity condition, even when attack evidence is absent.",
+   "recommended_actions": [
+    "Verify FortiGate traffic log generation and syslog forwarding to the collector.",
+    "Check collector/agent health, disk availability, and forwarding for the traffic log pipeline.",
+    "Confirm whether the traffic log source is down or misconfigured; escalate as a telemetry outage if the gap persists into the next interval."
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:41:22.418832+00:00",
+   "tokens_used": 10739
+  },
+  "deepseek-v4-pro:67b880064f58cdaad1bee3a92d1744007caa188be1b6044a89a6f1b012029b22": {
+   "should_alert": true,
+   "severity": "medium",
+   "confidence": 92,
+   "category": "telemetry_gap",
+   "title": "No traffic or UTM telemetry from FortiGate for full 5-minute interval",
+   "summary": "The window contains only a single FortiGate event/security-rating record; no traffic and no utm logs were received for the full reporting interval. Both log types are required inputs, so this represents a monitoring blind spot rather than normal quiet activity.",
+   "reasoning": "The lone event/security-rating log is a scheduled compliance scan and is benign by policy. However, the environment requires continuous traffic and utm visibility, and both are entirely absent for the full 5-minute interval. Per detection policy, missing required telemetry for a full interval is an operational alert (telemetry_gap) regardless of whether malicious activity is visible. There is no attack evidence to justify a higher-severity security classification, and no contradiction of the benign security-rating event.",
+   "recommended_actions": [
+    "Verify upstream FortiGate syslog delivery to the forwarder 10.6.66.3 (514/UDP, 6514/TCP) and the configured log targets.",
+    "Check collector/agent process health, log file creation and rotation on the SOC pipeline.",
+    "Confirm whether the traffic/utm gap persists into the next interval; if so, escalate as a telemetry outage."
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic+utm",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:41:42.674325+00:00",
+   "tokens_used": 8416
+  },
+  "deepseek-v4-pro:18cc2bfd39a4db5659fc758925f06cf6b471ef4129ee67649848e4972c09a8f8": {
+   "should_alert": false,
+   "severity": "low",
+   "confidence": 88,
+   "category": "ips_anomaly",
+   "title": "Single cleared IPS anomaly to Apple IMAP endpoint",
+   "summary": "One FortiGate utm/anomaly event was recorded from internal host 10.2.11.24 to 17.57.154.7 on TCP/993, with action clear_session. The destination IP has AbuseIPDB confidence 0 and is not flagged malicious.",
+   "reasoning": "This is an isolated IPS anomaly with no repetition and no session-volume evidence. The event was cleared rather than passed, and no crscore is provided to meet the high-confidence IPS anomaly threshold. The destination IP is not malicious per enrichment, so there is insufficient evidence for escalation.",
+   "recommended_actions": [
+    "Monitor for recurrence from 10.2.11.24 or to 17.57.154.7.",
+    "Confirm whether TCP/993 mail traffic is expected from this internal host.",
+    "No blocking or isolation is recommended based on this single low-signal event."
+   ],
+   "dedup_key": "ips_anomaly:10.2.11.24:17.57.154.7:993",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:41:53.268283+00:00",
+   "tokens_used": 8649
+  },
+  "deepseek-v4-pro:942579548bfee7265660c74cb1f5a341eaa452868edcb5e4fbe0f777472d0e14": {
+   "should_alert": false,
+   "severity": "low",
+   "confidence": 80,
+   "category": "ips_anomaly",
+   "title": "Single IPS anomaly session cleared on outbound UDP to benign Singapore host",
+   "summary": "One FortiGate utm/anomaly event: internal host 10.6.14.66 sent UDP (src 61400) to 219.75.125.184:54113, and the IPS action was clear_session. The destination has AbuseIPDB confidence 0 and is marked benign; no crscore was provided and no repetition occurred in the window.",
+   "reasoning": "This is a single IPS-detected anomaly where the firewall took action (clear_session), so the traffic was not passed. The external destination is enrichment-confirmed benign (confidence_score=0, is_malicious=false), so malicious_ip_activity does not apply. The ips_anomaly escalation criteria require crscore>=70 with action='pass', neither of which is present. Per policy, a single blocked IPS event with no volume anomaly or repetition is below the alert threshold and consistent with the firewall doing its job; this is retained only as low-signal telemetry.",
+   "recommended_actions": [
+    "No immediate action; monitor for recurrence of the same signature or source/destination pair",
+    "If this pattern repeats or shifts to action='pass' with elevated crscore, escalate and review the signature and affected host"
+   ],
+   "dedup_key": "ips_anomaly:10.6.14.66:219.75.125.184:54113",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:42:04.342687+00:00",
+   "tokens_used": 8402
+  },
+  "deepseek-v4-pro:60a60a1053283b6c9872da85c06a55603a657c071f2bb2b7a0a0d7c0e8485657": {
+   "should_alert": true,
+   "severity": "medium",
+   "confidence": 88,
+   "category": "telemetry_gap",
+   "title": "FortiGate traffic telemetry absent for reporting interval",
+   "summary": "The batch contains only one UTM anomaly and no FortiGate traffic logs for the full interval. The single anomaly is internal-to-external UDP to a benign IP with no malicious enrichment, repetition, or session evidence, but the missing traffic telemetry is an operational blind spot.",
+   "reasoning": "The lone utm/anomaly event involves 10.6.14.48 to 101.127.24.163 on UDP/53024 with action clear_session. The destination has confidence_score 0 and is_malicious=false, and there is no crscore, repetition, or byte-volume evidence to support a malicious classification. However, FortiGate traffic logs are required telemetry and are entirely absent for the reporting interval, which the detection policy classifies as telemetry_gap even without attack evidence.",
+   "recommended_actions": [
+    "Verify FortiGate traffic log delivery to the SOC collector.",
+    "Check collector/agent health, log rotation, and forwarding pipeline for the missing traffic log type.",
+    "Confirm whether the window genuinely had no traffic or whether delivery failed.",
+    "Continue monitoring the UTM anomaly for repetition but do not escalate it without corroborating evidence."
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:42:16.424382+00:00",
+   "tokens_used": 8416
+  },
+  "deepseek-v4-pro:1852fd119f485705b12241f946cd3fb85aaaf384c2672526c32e001f2b0b3939": {
+   "should_alert": true,
+   "severity": "medium",
+   "confidence": 88,
+   "category": "telemetry_gap",
+   "title": "Missing FortiGate traffic logs for reporting interval",
+   "summary": "The window contains only three FortiGate utm/ssl info events from 10.2.11.30 to benign Facebook/WhatsApp endpoints on 443/UDP. No FortiGate traffic logs are present for the reporting interval.",
+   "reasoning": "The visible UTM SSL events are low-risk and involve benign destinations, so they do not indicate malicious activity. However, FortiGate traffic logs are a required telemetry input, and their absence across the full reporting interval represents a monitoring blind spot even though UTM logs are present.",
+   "recommended_actions": [
+    "Verify FortiGate traffic log delivery to the SOC collector.",
+    "Check collector/agent health, file creation, rotation, and local disk availability.",
+    "Escalate as a telemetry outage if the traffic log gap persists into the next interval."
+   ],
+   "dedup_key": "telemetry_gap:fortigate:traffic",
+   "model": "deepseek-v4-pro",
+   "analyzed_at": "2026-10-21T16:43:00.780690+00:00",
+   "tokens_used": 9125
+  }
+ }
+}

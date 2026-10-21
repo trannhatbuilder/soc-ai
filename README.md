@@ -2,13 +2,40 @@
 
 SOC-AI is an automated security log analysis pipeline that ingests FortiGate firewall logs, enriches them with threat intelligence, analyzes them with an LLM, and sends real-time alerts to Telegram when threats are detected.
 
-```text
-Raw Logs -> Normalize -> Deduplicate -> Enrich -> Aggregate -> AI Analysis -> Alert Detection -> Send Telegram
-                                                                                                  |
-                                                                                       No alert for 1 hour?
-                                                                                                  |
-                                                                                       Send heartbeat message
+
+```mermaid
+flowchart TD
+    A["📥 Raw Logs"] --> B["🔧 Normalize"]
+    B --> C["🧹 Deduplicate"]
+    C --> D["🔍 Enrich"]
+    D --> E["📊 Aggregate"]
+    E --> F["🤖 AI Analysis"]
+    F --> G["🚨 Alert Detection"]
+    G --> H["📨 Send Telegram"]
+
+    H --> I{"⏱️ No alert for 1 hour?"}
+    I -- Yes --> J["💚 Send Heartbeat"]
+    I -- No --> K["⏳ Continue Monitoring"]
+
+    J --> K
+    K -.-> A
+
+    classDef input fill:#1e3a5f,stroke:#60a5fa,color:#fff
+    classDef process fill:#243447,stroke:#64748b,color:#fff
+    classDef ai fill:#4c1d95,stroke:#a78bfa,color:#fff
+    classDef alert fill:#7f1d1d,stroke:#f87171,color:#fff
+    classDef heartbeat fill:#14532d,stroke:#4ade80,color:#fff
+    classDef decision fill:#713f12,stroke:#fbbf24,color:#fff
+
+    class A input
+    class B,C,D,E process
+    class F ai
+    class G,H alert
+    class J heartbeat
+    class I decision
 ```
+
+
 
 ---
 
@@ -19,7 +46,7 @@ Raw Logs -> Normalize -> Deduplicate -> Enrich -> Aggregate -> AI Analysis -> Al
 | 1 | Normalize | `soc_ai.normalized` | Raw FortiGate syslog | `NormalizedLog` JSONL |
 | 2 | Deduplicate | `soc_ai.dedup` | NormalizedLog JSONL | `DeduplicatedLog` JSONL |
 | 3 | Enrich | `soc_ai.enrichment` | DeduplicatedLog JSONL | `EnrichedLog` JSONL |
-| 4 | Aggregate | `soc_ai.aggregation` | EnrichedLog JSONL | `AggregatedLog` JSONL (5-min windows) |
+| 4 | Aggregate | `soc_ai.aggregation` | EnrichedLog JSONL | `AggregatedLog` JSONL (tumbling time windows; 3 min in `main.py`) |
 | 5 | AI Analysis | `soc_ai.ai` | AggregatedLog JSONL | `AnalyzedLog` JSONL |
 | 6 | Alert Detection | `soc_ai.alert` | AnalyzedLog JSONL | AlertEvent / HeartbeatEvent JSONL |
 | 7 | Send Telegram | `soc_ai.telegram` | Events JSONL | Telegram messages |
@@ -45,7 +72,8 @@ soc-ai/
 │   ├── enriched_fortigate.jsonl
 │   ├── aggregated_fortigate.jsonl
 │   ├── analyzed_fortigate.jsonl
-│   └── alerts_fortigate.jsonl
+│   ├── alerts_fortigate.jsonl
+│   └── ai_verdict_cache.json        # LLM verdict cache (auto-generated)
 ├── soc_ai/
 │   ├── normalized/
 │   │   ├── schemas.py
@@ -132,13 +160,28 @@ All configuration is managed in `.env`:
 | `ABUSEIPDB_API_KEY` | AbuseIPDB API key (required for enrichment) |
 
 ### LLM Provider
+
+Any OpenAI-compatible endpoint works — switching providers only requires editing `.env`, no code changes.
+
 | Variable | Description |
 |----------|-------------|
 | `LLM_PROVIDER` | Provider: `groq`, `deepseek`, `openrouter`, `together`, `openai`, `custom` |
-| `<PROVIDER>_API_KEY` | API key for the selected provider |
-| `<PROVIDER>_MODEL` | Model name (optional, uses default if unset) |
+| `LLM_API_KEY` | API key (used when `LLM_PROVIDER=custom`) |
+| `LLM_BASE_URL` | OpenAI-compatible base URL (used when `LLM_PROVIDER=custom`) |
+| `LLM_MODEL` | Model name (used when `LLM_PROVIDER=custom`) |
+| `<PROVIDER>_API_KEY` | API key for built-in providers (e.g. `GROQ_API_KEY`, `DEEPSEEK_API_KEY`) |
+| `<PROVIDER>_MODEL` | Optional model override for built-in providers |
 | `LLM_TEMPERATURE` | Sampling temperature (default: 0.2) |
 | `LLM_MAX_TOKENS` | Max completion tokens (default: 1024) |
+
+Example — custom provider (RevidAPI):
+
+```env
+LLM_PROVIDER=custom
+LLM_API_KEY=your_revidapi_api_key
+LLM_BASE_URL=https://revidapi.com/v1
+LLM_MODEL=deepseek-v4-pro
+```
 
 ### Telegram Notification
 | Variable | Description |
@@ -161,7 +204,15 @@ All configuration is managed in `.env`:
 
 ## 5. Run
 
-### End-to-end (all 7 stages)
+### Orchestrator (recommended)
+
+```powershell
+python .\main.py
+```
+
+Runs all 7 stages in a continuous loop (every 3 minutes), sends alerts to Telegram, and emits a heartbeat when no alert occurs within `HEARTBEAT_INTERVAL_HOURS` (default: 3 minutes). Stop with **Ctrl+C** — the process exits within ~0.5 seconds even in the middle of an LLM/HTTP request (each cycle runs in a daemon thread).
+
+### Run each stage individually
 
 From the project root:
 
@@ -197,7 +248,34 @@ python -m soc_ai.telegram.pipeline output/alerts_fortigate.jsonl
 
 ---
 
-## 6. Alert & Heartbeat Format
+## 6. AI Verdict Cache
+
+LLM verdicts are cached per `(model, window content)` in `output/ai_verdict_cache.json`, so re-running on the same logs does **not** call the LLM again.
+
+How it works:
+
+- **First cycle** — every window is analyzed by the LLM; each verdict is stored in the cache (written atomically right after the call, so a Ctrl+C mid-cycle never loses verdicts already paid for).
+- **Later cycles** — a window whose content is unchanged is served from the cache: **no LLM call, 0 tokens**:
+
+```text
+[cache] verdict reused — no LLM call
+[+] Analysis summary: windows=10, alerts=6, fallbacks=0, cached=10, total_tokens=0, tokens_saved=91756
+```
+
+- Cached verdicts are **stable across runs** (same severity / category / dedup_key), which also prevents duplicate "ghost" alerts caused by LLM non-determinism.
+- Fallback verdicts (`analysis_failed`) are **never cached** — failed windows are retried automatically on the next cycle.
+- New or changed logs produce new window content → analyzed normally once, then cached.
+- Event IDs are derived from the log content (SHA-1) instead of a random UUID, so identical input always produces identical windows — this is what makes cache hits reliable (10/10 on static logs).
+
+To force a full re-analysis, delete the cache file:
+
+```powershell
+del output\ai_verdict_cache.json
+```
+
+---
+
+## 7. Alert & Heartbeat Format
 
 ### Alert Message (Telegram)
 
@@ -230,7 +308,7 @@ Last alert at: 2026-06-15T08:00:00+08:00
 
 ---
 
-## 7. Severity & Reputation Mapping
+## 8. Severity & Reputation Mapping
 
 ### Severity (from AbuseIPDB confidence score)
 

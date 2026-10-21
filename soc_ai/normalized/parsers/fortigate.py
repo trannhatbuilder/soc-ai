@@ -10,8 +10,8 @@ Supported FortiGate type/subtype combinations:
   - utm:    anomaly, app-ctrl, dns, ssl, webfilter
 """
 
+import hashlib
 import re
-import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -100,7 +100,7 @@ def parse_fortigate_line(line: str) -> NormalizedLog:
     detail = _build_detail(fields, syslog_host)
 
     # 7. Generate event_id
-    event_id = _build_event_id(fields, timestamp)
+    event_id = _build_event_id(fields, timestamp, line)
 
     parse_status = "partial" if parse_errors else "success"
 
@@ -252,7 +252,16 @@ def _build_detail(
     return detail
 
 
-def _build_event_id(fields: Dict[str, str], timestamp: str) -> str:
+def _stable_digest(timestamp: str, raw_line: str) -> str:
+    """Short content hash — the same log text always yields the same id."""
+    return hashlib.sha1(f"{timestamp}|{raw_line}".encode("utf-8")).hexdigest()[:8]
+
+
+def _build_event_id(
+    fields: Dict[str, str],
+    timestamp: str,
+    raw_line: str = "",
+) -> str:
     """Generate a unique event ID, preferring sessionid-based composition."""
     session_id = fields.get("sessionid")
     logid = fields.get("logid", "unknown")
@@ -261,14 +270,17 @@ def _build_event_id(fields: Dict[str, str], timestamp: str) -> str:
     if session_id:
         return f"fgt-{devid}-{session_id}"
 
-    # Fallback: composite with short UUID
-    return f"fgt-{devid}-{logid}-{uuid.uuid4().hex[:8]}"
+    # Fallback: stable content-based digest. (Previously this used a random
+    # uuid4, which silently changed the event_id on every re-parse of the
+    # same log line — breaking cross-run deduplication and making any
+    # downstream content cache miss forever.)
+    return f"fgt-{devid}-{logid}-{_stable_digest(timestamp, raw_line)}"
 
 
 def _build_failed_log(line: str, errors: List[str]) -> NormalizedLog:
     """Create a NormalizedLog for lines that could not be parsed."""
     return NormalizedLog(
-        event_id=f"parse-failed-{uuid.uuid4().hex[:8]}",
+        event_id=f"parse-failed-{_stable_digest('', line)}",
         timestamp=datetime.now(timezone.utc).isoformat(),
         log_source="fortigate",
         log_type="unknown",
