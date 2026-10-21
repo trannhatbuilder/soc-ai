@@ -120,8 +120,8 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
 }
 
 DEFAULT_TEMPERATURE: float = 0.2
-DEFAULT_MAX_TOKENS: int = 1024
-DEFAULT_TIMEOUT_SECONDS: float = 30.0
+DEFAULT_MAX_TOKENS: int = 4096
+DEFAULT_TIMEOUT_SECONDS: float = 120.0
 
 
 # ── Analyzer ────────────────────────────────────────────────────────────
@@ -451,15 +451,14 @@ class LLMAnalyzer:
     def _build_user_prompt(self, aggregated: AggregatedLog) -> str:
         """
         Build the user prompt containing the aggregated window data.
-
-        The window is serialised to a compact JSON object containing:
-
-          - window_start, window_end, log_source
-          - event_count, unique_log_count, malicious_ip_count
-          - logs: list of every EnrichedLog in the window (each with
-            its dedup metadata and AbuseIPDB enrichments)
         """
+        # Lọc bớt dữ liệu trước khi chuyển thành JSON
         window_dict = aggregated.to_dict()
+        filtered_logs = [
+            self._filter_log_for_llm(log) for log in window_dict.get("logs", [])
+        ]
+        window_dict["logs"] = filtered_logs
+
         window_json = json.dumps(window_dict, ensure_ascii=False, indent=2)
 
         return (
@@ -468,6 +467,39 @@ class LLMAnalyzer:
             f"Window data:\n```json\n{window_json}\n```\n\n"
             "Return ONLY the JSON verdict object."
         )
+    
+    def _filter_log_for_llm(self, log: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Lọc bớt trường không cần thiết trong log để giảm kích thước token.
+        Chỉ giữ lại các trường quan trọng cho LLM phân tích.
+        """
+        filtered = {
+            "timestamp": log.get("timestamp"),
+            "log_source": log.get("log_source"),
+            "log_type": log.get("log_type"),
+            "log_subtype": log.get("log_subtype"),
+            "severity": log.get("severity"),
+            "src_ip": log.get("src_ip"),
+            "dst_ip": log.get("dst_ip"),
+            "src_port": log.get("src_port"),
+            "dst_port": log.get("dst_port"),
+            "protocol": log.get("protocol"),
+            "action": log.get("action"),
+        }
+
+        # Thêm enrichments (chỉ lấy thông tin quan trọng)
+        if "enrichments" in log:
+            filtered["enrichments"] = {}
+            for ip, enrichment in log["enrichments"].items():
+                filtered["enrichments"][ip] = {
+                    "confidence_score": enrichment.get("confidence_score"),
+                    "reputation": enrichment.get("reputation"),
+                    "threat_severity": enrichment.get("threat_severity"),
+                    "is_malicious": enrichment.get("is_malicious"),
+                    "country": enrichment.get("country"),
+                }
+
+        return filtered
 
     # ── Response parsing ──────────────────────────────────────────────
 

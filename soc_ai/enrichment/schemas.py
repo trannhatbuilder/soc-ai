@@ -55,6 +55,7 @@ class IPEnrichment:
 
     # ── Geo (from provider) ──────────────────────────────────────────
     country: Optional[str] = None       # 2-letter country code (e.g. "US", "VN")
+    city: Optional[str] = None
 
     # ── Context (only when available) ────────────────────────────────
     usage_type: Optional[str] = None    # e.g. "Data Center/Web Hosting/Transit"

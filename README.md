@@ -29,6 +29,7 @@ Raw Logs -> Normalize -> Deduplicate -> Enrich -> Aggregate -> AI Analysis -> Al
 - **Alert** — When `verdict.should_alert == True`, an `AlertEvent` is created and sent to Telegram immediately.
 - **Heartbeat** — When 1 hour passes with no alerts, a `HeartbeatEvent` (liveness message) is sent to confirm the pipeline is still running.
 - The 1-hour timer is persisted to `.cache/alert_state.json` so it survives across pipeline runs.
+- `main.py` (the orchestrator) overrides these defaults: it runs every 3 minutes with 3-minute aggregation windows and a 3-minute heartbeat interval.
 
 ---
 
