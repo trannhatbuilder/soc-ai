@@ -73,7 +73,7 @@ soc-ai/
 │   ├── aggregated_fortigate.jsonl
 │   ├── analyzed_fortigate.jsonl
 │   ├── alerts_fortigate.jsonl
-│   └── ai_verdict_cache.json        # LLM verdict cache (auto-generated)
+│   └── ai_verdict_cache.json        
 ├── soc_ai/
 │   ├── normalized/
 │   │   ├── schemas.py
